@@ -1,0 +1,25 @@
+# === Gradle build / wrapper ===
+.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar  # wrapper本体は残す
+
+# === Java artifacts ===
+*.class
+*.jar
+*.war
+*.ear
+
+# === IDE / Editor ===
+.idea/
+*.iml
+.vscode/
+bin/
+
+# === OS-specific ===
+.DS_Store
+Thumbs.db
+
+# === Docker / Mosquitto ===
+mosquitto/passwd
+mosquitto/data/
+mosquitto/log/

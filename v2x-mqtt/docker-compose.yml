@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    ports:
+      - "1883:1883"                   # ホスト(WSL/Windows)の1883 → コンテナの1883
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosq-data:/mosquitto/data
+      - mosq-log:/mosquitto/log
+    restart: unless-stopped
+
+volumes:
+  mosq-data:
+  mosq-log:
