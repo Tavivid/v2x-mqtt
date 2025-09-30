@@ -1,2 +1,2 @@
 rootProject.name = 'v2x-mqtt'
-include 'coordinator', 'vehicle'
+include 'common', 'coordinator', 'vehicle'

@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -6,7 +5,8 @@ services:
     ports:
       - "1883:1883"                   # ホスト(WSL/Windows)の1883 → コンテナの1883
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/aclfile:/mosquitto/config/aclfile
       - mosq-data:/mosquitto/data
       - mosq-log:/mosquitto/log
     restart: unless-stopped
