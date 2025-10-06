@@ -1,29 +1,7 @@
 package org.example.v2x.vehicle.datasource;
 
-import org.example.v2x.common.model.PointCloudChunk;
-
-/**
- * 点群供給インターフェイス。データセット/センサ/ネットワークなど実装差し替え可能。
- */
-public interface PointCloudSource {
-
-    /**
-     * 次のチャンクを返す（データが枯渇したら null）。
-     */
-    PointCloudChunk nextChunk(String regionId, String vehicleId, int maxPointsPerChunk) throws Exception;
-}
-```
-
-
----
-# vehicle/src/main/java/org/example/v2x/vehicle/datasource/DatasetPointCloudSource.java
-```java
-package org.example.v2x.vehicle.datasource;
-
-
 import org.example.v2x.common.model.Point3D;
 import org.example.v2x.common.model.PointCloudChunk;
-
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -31,14 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
-
 import java.util.stream.Collectors;
 
-
-/**
-* CSV (x,y,z) のファイル群から順にチャンクを生成する簡易実装。
-* PLY/PCD は今後拡張（TODO）
-*/
 public class DatasetPointCloudSource implements PointCloudSource {
 
     private final List<Path> files;
@@ -52,14 +24,18 @@ public class DatasetPointCloudSource implements PointCloudSource {
         if (!Files.exists(root)) {
             throw new IOException("Dataset path not found: " + datasetRoot);
         }
+        final PathMatcher matcher = (glob != null && !glob.isBlank())
+                ? root.getFileSystem().getPathMatcher("glob:" + glob)
+                : root.getFileSystem().getPathMatcher("glob:**/*.csv");
+
         try (var s = Files.walk(root)) {
             this.files = s.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".csv"))
+                    .filter(p -> matcher.matches(root.relativize(p)))
                     .sorted()
                     .collect(Collectors.toList());
         }
         if (files.isEmpty()) {
-            throw new IOException("No dataset files matched: " + glob);
+            throw new IOException("No dataset files matched glob: " + (glob == null ? "(null)" : glob));
         }
         this.loop = loop;
         loadFile(0);
@@ -77,22 +53,59 @@ public class DatasetPointCloudSource implements PointCloudSource {
             String line;
             while ((line = br.readLine()) != null) {
                 line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) {
-                    continue;
-                }
+                if (line.isEmpty() || line.startsWith("#")) continue;
                 String[] a = line.split(",");
-                if (a.length < 3) {
-                    continue;
-                }
+                if (a.length < 3) continue;
                 try {
                     float x = Float.parseFloat(a[0].trim());
                     float y = Float.parseFloat(a[1].trim());
                     float z = Float.parseFloat(a[2].trim());
                     pts.add(new Point3D(x, y, z));
-                } catch (NumberFormatException ignore) {
-                }
+                } catch (NumberFormatException ignore) { /* skip bad line */ }
             }
         }
         return pts;
+    }
+
+    /** PointCloudSource の仕様：見つからない/終端の場合は null を返す実装にしています。 */
+    @Override
+    public PointCloudChunk nextChunk(String vehicleId, String region, int maxPointsPerChunk) {
+        try {
+            if (current.isEmpty()) {
+                if (!advanceFile()) return null;
+            }
+
+            int remaining = current.size() - pointCursor;
+            if (remaining <= 0) {
+                if (!advanceFile()) return null;
+                remaining = current.size() - pointCursor;
+                if (remaining <= 0) return null;
+            }
+
+            int n = Math.min(maxPointsPerChunk, remaining);
+            List<Point3D> sub = current.subList(pointCursor, pointCursor + n);
+            List<Point3D> copy = new ArrayList<>(sub); // subList の独立コピー
+            pointCursor += n;
+
+            long ts = Instant.now().toEpochMilli();
+            // ★ あなたの PointCloudChunk のコンストラクタに合わせて調整してください
+            // 例: new PointCloudChunk(vehicleId, region, ts, copy)
+            return new PointCloudChunk(vehicleId, region, ts, copy);
+
+        } catch (IOException e) {
+            // 読み替えや次ファイル読み込みに失敗した場合は null（上位でリトライ想定）
+            return null;
+        }
+    }
+
+    /** 次ファイルへ（loop=true なら巻き戻し） */
+    private boolean advanceFile() throws IOException {
+        int next = fileIdx + 1;
+        if (next >= files.size()) {
+            if (!loop) return false;
+            next = 0;
+        }
+        loadFile(next);
+        return true;
     }
 }

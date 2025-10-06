@@ -1,5 +1,14 @@
 plugins {
-id 'java'
+    id 'java'
+}
+
+allprojects {
+    group = 'org.example.v2x'
+    version = '0.1.0'
+
+    repositories {
+        mavenCentral()
+    }
 }
 
 
@@ -8,26 +17,25 @@ version = '0.1.0'
 
 
 subprojects {
-apply plugin: 'java'
-sourceCompatibility = JavaVersion.VERSION_17
-targetCompatibility = JavaVersion.VERSION_17
+    apply plugin: 'java'
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+
+    repositories {
+        mavenCentral()
+    }
 
 
-repositories {
-mavenCentral()
-}
+    dependencies {
+        implementation 'com.google.code.gson:gson:2.11.0'
+        implementation 'org.yaml:snakeyaml:2.2'
+        implementation 'org.slf4j:slf4j-api:2.0.16'
+        runtimeOnly 'ch.qos.logback:logback-classic:1.5.8'
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+    }
 
 
-dependencies {
-implementation 'com.google.code.gson:gson:2.11.0'
-implementation 'org.yaml:snakeyaml:2.2'
-implementation 'org.slf4j:slf4j-api:2.0.16'
-runtimeOnly 'ch.qos.logback:logback-classic:1.5.8'
-testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
-}
-
-
-test {
-useJUnitPlatform()
-}
+    test {
+        useJUnitPlatform()
+    }
 }

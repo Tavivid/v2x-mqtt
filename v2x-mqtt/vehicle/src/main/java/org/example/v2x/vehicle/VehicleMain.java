@@ -33,9 +33,12 @@ public class VehicleMain {
                 "Publisher").start();
 
 // リクエスタ（必要なリージョンのデータ要求）
+        final var regionFinal = region;
+        final var clientFinal = client;
+
         new Thread(() -> {
             try {
-                new RequesterTask(client, region).run();
+                new RequesterTask(clientFinal, regionFinal).run();
             } catch (Exception e) {
                 e.printStackTrace();
             }
