@@ -23,3 +23,9 @@ Thumbs.db
 mosquitto/passwd
 mosquitto/data/
 mosquitto/log/
+.gradle/
+.vscode-server/
+**/build/
+**/out/
+mosquitto/data/
+.vscode-server/
