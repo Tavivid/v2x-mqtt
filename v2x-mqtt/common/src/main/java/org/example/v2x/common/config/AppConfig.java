@@ -38,6 +38,7 @@ public class AppConfig {
                     ? (Map<String, Object>) vehicle.get("dataset")
                     : java.util.Map.of();
 
+            // YAML 既定値
             String host = (String) (mqtt != null ? mqtt.getOrDefault("host", "localhost") : "localhost");
             int port = ((Number) (mqtt != null ? mqtt.getOrDefault("port", 1883) : 1883)).intValue();
             String prefix = (String) (mqtt != null ? mqtt.getOrDefault("clientPrefix", "v2x-") : "v2x-");
@@ -45,13 +46,28 @@ public class AppConfig {
             int recv = ((Number) (udp != null ? udp.getOrDefault("recv_port", 51235) : 51235)).intValue();
             int precision = ((Number) (region != null ? region.getOrDefault("geohash_precision", 8) : 8)).intValue();
             int ttlSec = ((Number) (region != null ? region.getOrDefault("ttl_seconds", 5) : 5)).intValue();
-            String vid = (String) (vehicle != null ? vehicle.getOrDefault("id", "vehicle-unknown") : "vehicle-unknown");
+            String vidYaml = (String) (vehicle != null ? vehicle.getOrDefault("id", "vehicle-unknown") : "vehicle-unknown");
             double hz = ((Number) (vehicle != null ? vehicle.getOrDefault("publish_rate_hz", 2) : 2)).doubleValue();
             int maxPts = ((Number) (vehicle != null ? vehicle.getOrDefault("max_points_per_chunk", 400) : 400)).intValue();
 
             String dsPath = (String) dataset.getOrDefault("path", "./dataset");
             boolean dsLoop = dataset.getOrDefault("loop", Boolean.TRUE) instanceof Boolean b && b;
             String dsGlob = (String) dataset.getOrDefault("glob", "**/*.csv");
+
+            // ===== ここから上書き（環境変数 > システムプロパティ > YAML） =====
+            // 最低限：VEHICLE_ID / -DvehicleId をサポート（質問の主目的）
+            String vid = envOrProp("VEHICLE_ID", "vehicleId", vidYaml);
+
+            // 便利オプション（任意）: MQTT_HOST/MQTT_PORT/MQTT_CLIENT_PREFIX も受け付ける
+            host   = envOrProp("MQTT_HOST", "mqtt.host", host);
+            port   = envOrPropInt("MQTT_PORT", "mqtt.port", port);
+            prefix = envOrProp("MQTT_CLIENT_PREFIX", "mqtt.clientPrefix", prefix);
+
+            // dataset の上書きもあると実験しやすい（任意）
+            dsPath = envOrProp("DATASET_PATH", "dataset.path", dsPath);
+            dsLoop = envOrPropBool("DATASET_LOOP", "dataset.loop", dsLoop);
+            dsGlob = envOrProp("DATASET_GLOB", "dataset.glob", dsGlob);
+            // ============================================================
 
             return new AppConfig(host, port, prefix, send, recv, precision, ttlSec, vid, hz, maxPts, dsPath, dsLoop, dsGlob);
         } catch (IOException e) {
@@ -77,5 +93,45 @@ public class AppConfig {
         this.datasetPath = datasetPath;
         this.datasetLoop = datasetLoop;
         this.datasetGlob = datasetGlob;
+    }
+
+    // ========= 上書きユーティリティ =========
+    private static String envOrProp(String env, String prop, String fallback) {
+        String v = System.getenv(env);
+        if (v != null && !v.isBlank()) return v;
+        v = System.getProperty(prop);
+        return (v != null && !v.isBlank()) ? v : fallback;
+    }
+
+    private static int envOrPropInt(String env, String prop, int fallback) {
+        String ev = System.getenv(env);
+        if (ev != null && !ev.isBlank()) {
+            try { return Integer.parseInt(ev.trim()); } catch (NumberFormatException ignore) {}
+        }
+        String pv = System.getProperty(prop);
+        if (pv != null && !pv.isBlank()) {
+            try { return Integer.parseInt(pv.trim()); } catch (NumberFormatException ignore) {}
+        }
+        return fallback;
+    }
+
+    private static boolean envOrPropBool(String env, String prop, boolean fallback) {
+        String ev = System.getenv(env);
+        if (ev != null && !ev.isBlank()) {
+            return parseBool(ev.trim(), fallback);
+        }
+        String pv = System.getProperty(prop);
+        if (pv != null && !pv.isBlank()) {
+            return parseBool(pv.trim(), fallback);
+        }
+        return fallback;
+    }
+
+    private static boolean parseBool(String s, boolean fallback) {
+        switch (s.toLowerCase()) {
+            case "1": case "true": case "yes": case "y": return true;
+            case "0": case "false": case "no":  case "n": return false;
+            default: return fallback;
+        }
     }
 }
