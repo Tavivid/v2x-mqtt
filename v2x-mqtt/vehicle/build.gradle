@@ -3,8 +3,10 @@ plugins {
 }
 
 application {
-    mainClass = 'app.VehicleAgent'
+    //mainClass = 'app.VehicleAgent'
+    mainClass = 'org.example.v2x.vehicle.VehicleMain'
 }
+
 
 dependencies {
     implementation project(':common')
