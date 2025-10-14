@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.LinkedHashMap;
 
 public class Coordinator {
 
@@ -90,14 +91,37 @@ public class Coordinator {
         return;
       }
 
+      Map<String, Object> rxUdp = null;
+      try {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reqObj = new ObjectMapper().readValue(payload, Map.class);
+        Object rx = (reqObj != null) ? reqObj.get("rx_udp") : null;
+        if (rx instanceof Map) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> rxMap = (Map<String, Object>) rx;
+          Object ipObj = rxMap.get("ip");
+          Object portObj = rxMap.get("port");
+          if (ipObj != null && portObj instanceof Number) {
+            rxUdp = Map.of("ip", String.valueOf(ipObj), "port", ((Number) portObj).intValue());
+          }
+        }
+      } catch (Exception ignore) {
+        // パース失敗時は rx_udp なしで続行（既存動作を壊さない）
+      }
+      if (rxUdp == null) {
+        System.out.println("[COORD][INFO] rx_udp not found in request payload -> fetch-request will omit rx_udp");
+      }
+
       String requestId = UUID.randomUUID().toString();
-      Map<String, Object> fetch = Map.of(
-          "type",       "fetch-request",
-          "region_id",  region,
-          "request_id", requestId,
-          "ts_ms",      now,
-          "ttl_ms",     ttlMs
-      );
+      Map<String, Object> fetch = new LinkedHashMap<>();
+      fetch.put("type",       "fetch-request");
+      fetch.put("region_id",  region);
+      fetch.put("request_id", requestId);
+      fetch.put("ts_ms",      now);
+      fetch.put("ttl_ms",     ttlMs);
+      if (rxUdp != null) {
+        fetch.put("rx_udp", rxUdp);
+      }
 
       try {
         byte[] out = new ObjectMapper().writeValueAsBytes(fetch);

@@ -109,6 +109,9 @@ public class VehicleMain {
         // MQTT 接続（ClientID は Factory 側でユニーク化推奨）
         MqttClient client = MqttClientFactory.connect(cfg.mqttHost, cfg.mqttPort, cfg.mqttClientPrefix + cfg.vehicleId);
 
+        org.example.v2x.vehicle.net.UdpSinkService udpSink = new org.example.v2x.vehicle.net.UdpSinkService(cfg);
+        udpSink.start();
+
         // Publisher（データセットがあれば起動／無ければ起動しない）
         PointCloudSource source = null;
         boolean startPublisher = true;
@@ -128,9 +131,6 @@ public class VehicleMain {
         // === /data 受信（fetch-request）: RequesterTask をリスナーとして利用 ===
         RequesterTask reqHandler = new RequesterTask(cfg);
         IMqttMessageListener listener = reqHandler.asListener();
-
-        // 方針1: 全リージョン一括購読（シンプル）
-        client.subscribe("v2x/region/+/data", 1, listener);
 
         // 追加で、動的購読（任意・SUB_FEED_CSVが与えられたときだけ）
         long idleMs = Long.parseLong(System.getenv().getOrDefault("SUB_IDLE_MS", "50000"));
@@ -192,6 +192,9 @@ public class VehicleMain {
             }
         }
 
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try { udpSink.close(); } catch (Exception ignore) {}
+        }));
         Runtime.getRuntime().addShutdownHook(new Thread(dynSub::close));
         Thread.currentThread().join();
     }

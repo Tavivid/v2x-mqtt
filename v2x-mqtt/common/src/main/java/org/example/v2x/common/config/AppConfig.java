@@ -62,9 +62,9 @@ public class AppConfig {
             String dsGlob = (String) dataset.getOrDefault("glob", "**/*.csv");
 
             // ★ transfer の既定値
-            String sendDir = (String) transfer.getOrDefault("send_dir", "./send");
+            String sendDir = (String) transfer.getOrDefault("send_dir", "./v2x-send");
             String sendTpl = (String) transfer.getOrDefault("send_file_template", "*{region}*");
-            String recvDir = (String) transfer.getOrDefault("recv_dir", "./recv");
+            String recvDir = (String) transfer.getOrDefault("recv_dir", "./v2x-recv");
 
             // ===== ここから上書き（環境変数 > システムプロパティ > YAML） =====
             // 最低限：VEHICLE_ID / -DvehicleId をサポート（質問の主目的）
