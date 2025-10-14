@@ -8,14 +8,14 @@ v2x-mqtt — クイックスタート & 運用メモ (README.txt)
 ----------------------------------------
 - mosquitto …… MQTTブローカ（Docker）
 - coordinator … /request を受けて request_id を発行 → /control へ fetch-request を publish
-- vehicle …… 
-  - Requester: /request を出す／/control を見る
-  - Publisher: （将来）点群を直送（いまはデータが無ければ起動しない）
-  - CSV feeder（任意）: REQ_FEED_CSV 指定時、CSV の通りに /request を発行
+- vehicle ……
+  - Request feeder: REQ_FEED_CSV に従って /request を publish（QoS 推奨: 1）
+  - Dynamic subscribe: SUB_FEED_CSV に従って /data を動的購読（アイドルで自動解除）
+  - （任意）Publisher: データセットがあれば点群を直送（未接続なら起動しない）
 
 ※ 制御トピック（実データは通さない）
   - 依頼:  v2x/region/{region}/request
-  - 指示:  v2x/region/{region}/control
+  - 指示:  v2x/region/{region}/data
 
 ----------------------------------------
 ■ 必要環境
@@ -43,8 +43,13 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 # /request を受けて /control に fetch-request を出す実装を前提
 ./gradlew :coordinator:run
 
-※ 注意：5秒おきに勝手にログが出続けるなら“デモ用の自発ループ版”です。
-  /request に反応して /control を publish する実装に差し替えてください。
+起動後の期待ログ例
+[COORD] connected ...
+[COORD] (re)subscribed: v2x/region/+/request qos=1
+# /request を受信すると
+[COORD][RX] topic=.../request ...
+[COORD][TX] -> .../data qos=1 payload={"type":"fetch-request", ...}
+[COORD] publish fetch-request -> topic=.../data {...}
 
 ----------------------------------------
 ■ 3. Vehicle を起動（CSV フィーダで任意リージョンを要求）
@@ -59,16 +64,40 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 - region_id: 依頼対象リージョン
 - ip,port: 要求側（受信者）の UDP 宛先（今回はダミーでもOK）
 
-[3.2] Vehicle 起動
-# データセットが無ければ Publisher は自動的にスキップされます
-REQ_FEED_CSV=./requests.csv ./gradlew :vehicle:run
+[3.2] 「購読CSV」（必要な場合のみ）: subscribe.csv
+# at_ms,region_id
+0,cell-10
+500,cell-12
+1000,cell-14
 
-# 繰り返したい場合
-REQ_FEED_CSV=./requests.csv REQ_FEED_LOOP=1 ./gradlew :vehicle:run
+- 指定時刻で /data 購読を開始（SUB_IDLE_MS 経過後は自動で unsubscribe）
+- 受信処理は RequesterTask を流用（動的購読のリスナーとして使用）
 
-起動ログ例
+[3.3] Vehicle 起動
+# データセットが無ければ Publisher は自動スキップ
+# VEHICLE_ID は AppConfig の YAML を環境変数で上書き可能（重複起動時は必ず変えるか ClientID をユニーク化）
+# 購読者両側
+VEHICLE_ID=vehA \
+REQ_FEED_CSV="/home/user/projects/v2x-mqtt/v2x-mqtt/vehicle/requests.csv" \
+REQ_FEED_LOOP=1 \
+./gradlew --no-daemon :vehicle:run
+
+# 発行者両側
+VEHICLE_ID=vehB \
+SUB_FEED_CSV="/home/user/projects/v2x-mqtt/v2x-mqtt/vehicle/subscribe.csv" \
+SUB_FEED_LOOP=0 \
+./gradlew --no-daemon :vehicle:run
+
+ログ例
+[Vehicle] Dataset not available: Dataset path not found: ./dataset
 [Vehicle] No dataset -> PublisherTask is not started.
-[FEED] started with file=.../requests.csv loop=false
+Vehicle started (dynamic-subscribe only; handler=RequesterTask) defaultRegion=xn76urx6, dataset=./dataset
+[FEED-REQ] started file=.../requests.csv loop=false
+[FEED-SUB] started file=.../subscribe.csv loop=false
+[DYN] subscribed v2x/region/cell-10/data
+[FEED-REQ] published topic=v2x/region/cell-10/request payload={...}
+[Requester] fetch-request seen: {...}
+...
 
 ----------------------------------------
 ■ 4. 動作確認（観察コマンド）
@@ -87,6 +116,31 @@ docker exec -it mosquitto sh -lc \
 3) （将来）Publisher が fetch-request を見て点群を UDP/TCP 直送（現時点ではスキップ）
 
 ----------------------------------------
+■ 設定と上書き（抜粋）
+----------------------------------------
+- AppConfig（YAML）を環境変数/システムプロパティで上書き可能
+  - VEHICLE_ID / -DvehicleId … 車両ID（ClientIDではない）。複数起動時はユニークに
+  - MQTT_HOST / -Dmqtt.host … ブローカホスト
+  - MQTT_PORT / -Dmqtt.port … ブローカポート
+  - MQTT_CLIENT_PREFIX / -Dmqtt.clientPrefix … ClientID のベース
+  - DATASET_PATH / DATASET_LOOP / DATASET_GLOB … データセット関連（無ければ Publisher は起動しない）
+
+- ClientID の衝突回避（どれか1つ）
+  1) VEHICLE_ID をインスタンスごとに変える
+  2) `MQTT_CLIENT_ID` を個別指定（例：vehA-01, vehB-01）
+  3) MqttClientFactory で `prefix + vehicleId + "-{短いUUID}"` を自動付与（推奨）
+     併せて `AutomaticReconnect=true`, `CleanSession=false` を設定
+
+----------------------------------------
+■ QoS/再接続の推奨
+----------------------------------------
+- Vehicle の /request publish …… QoS=1（瞬断時の取りこぼしを減らす）
+- Coordinator の /request subscribe …… QoS=1
+- Coordinator の /data publish …… QoS=1
+- すべてのクライアントで `AutomaticReconnect=true`, `CleanSession=false` を推奨
+- 再接続時は購読の明示再登録（MqttCallbackExtended#connectComplete）を保険として実装
+
+----------------------------------------
 ■ 制御メッセージ例
 ----------------------------------------
 [Requester → Coordinator（依頼）]
@@ -95,22 +149,21 @@ topic: v2x/region/cell-12/request
   "type": "need-pointcloud",
   "region_id": "cell-12",
   "rx_udp": {"ip":"127.0.0.1","port":51235},
-  "ts_ms": 1759297000123,
-  "nonce": "f0b3-..."
+  "ts_ms": 1760385543335,
+  "nonce": "95ebdbf3-..."
 }
 
-[Coordinator → Publisher（取寄せ指示）]
-topic: v2x/region/cell-12/control
+[Coordinator → Vehicle/Pub側（取寄せ指示）]
+topic: v2x/region/cell-12/data
 {
   "type": "fetch-request",
   "region_id": "cell-12",
-  "request_id": "7a3f3c2e-....",
+  "request_id": "5c1f78ab-...",
   "ttl_ms": 1500,
-  "ts_ms": 1759297000456,
-  "target": {"ip":"127.0.0.1","port":51235}
+  "ts_ms": 1760385543344
 }
 
-※ retained=false / QoS0〜1 推奨（過去の指示を残さない）
+※ retained=false。購読開始より前に publish されたものは受け取れません。）
 
 ----------------------------------------
 ■ よくあるつまずき（チェックリスト）

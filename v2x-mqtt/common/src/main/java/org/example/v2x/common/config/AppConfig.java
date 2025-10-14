@@ -23,6 +23,10 @@ public class AppConfig {
     public final boolean datasetLoop;
     public final String datasetGlob;
 
+    public final String transferSendDir;        // 送信用ディレクトリ
+    public final String transferSendTemplate;   // 送信ファイル名テンプレート（{region} 置換）
+    public final String transferRecvDir;        // 受信用ディレクトリ
+
     @SuppressWarnings("unchecked")
     public static AppConfig load() {
         try (InputStream in = AppConfig.class.getResourceAsStream("/v2x-config.yml")) {
@@ -36,6 +40,9 @@ public class AppConfig {
             Map<String, Object> vehicle = (Map<String, Object>) root.get("vehicle");
             Map<String, Object> dataset = vehicle != null && vehicle.containsKey("dataset")
                     ? (Map<String, Object>) vehicle.get("dataset")
+                    : java.util.Map.of();
+            Map<String, Object> transfer = vehicle != null && vehicle.containsKey("transfer")
+                    ? (Map<String, Object>) vehicle.get("transfer")
                     : java.util.Map.of();
 
             // YAML 既定値
@@ -54,6 +61,11 @@ public class AppConfig {
             boolean dsLoop = dataset.getOrDefault("loop", Boolean.TRUE) instanceof Boolean b && b;
             String dsGlob = (String) dataset.getOrDefault("glob", "**/*.csv");
 
+            // ★ transfer の既定値
+            String sendDir = (String) transfer.getOrDefault("send_dir", "./send");
+            String sendTpl = (String) transfer.getOrDefault("send_file_template", "*{region}*");
+            String recvDir = (String) transfer.getOrDefault("recv_dir", "./recv");
+
             // ===== ここから上書き（環境変数 > システムプロパティ > YAML） =====
             // 最低限：VEHICLE_ID / -DvehicleId をサポート（質問の主目的）
             String vid = envOrProp("VEHICLE_ID", "vehicleId", vidYaml);
@@ -69,9 +81,10 @@ public class AppConfig {
             dsGlob = envOrProp("DATASET_GLOB", "dataset.glob", dsGlob);
             // ============================================================
 
-            return new AppConfig(host, port, prefix, send, recv, precision, ttlSec, vid, hz, maxPts, dsPath, dsLoop, dsGlob);
+            return new AppConfig(host, port, prefix, send, recv, precision, ttlSec, vid, hz, maxPts,
+                    dsPath, dsLoop, dsGlob,
+                    sendDir, sendTpl, recvDir);
         } catch (IOException e) {
-            // try-with-resources の close() などで発生しうる IOException を包む
             throw new UncheckedIOException("Failed to read v2x-config.yml from classpath", e);
         }
     }
@@ -79,7 +92,8 @@ public class AppConfig {
     public AppConfig(String mqttHost, int mqttPort, String mqttClientPrefix,
                      int udpSendPort, int udpRecvPort, int geohashPrecision,
                      int regionTtlSeconds, String vehicleId, double publishRateHz, int maxPointsPerChunk,
-                     String datasetPath, boolean datasetLoop, String datasetGlob) {
+                     String datasetPath, boolean datasetLoop, String datasetGlob,
+                     String transferSendDir, String transferSendTemplate, String transferRecvDir) {
         this.mqttHost = mqttHost;
         this.mqttPort = mqttPort;
         this.mqttClientPrefix = mqttClientPrefix;
@@ -93,6 +107,9 @@ public class AppConfig {
         this.datasetPath = datasetPath;
         this.datasetLoop = datasetLoop;
         this.datasetGlob = datasetGlob;
+        this.transferSendDir = transferSendDir;
+        this.transferSendTemplate = transferSendTemplate;
+        this.transferRecvDir = transferRecvDir;
     }
 
     // ========= 上書きユーティリティ =========

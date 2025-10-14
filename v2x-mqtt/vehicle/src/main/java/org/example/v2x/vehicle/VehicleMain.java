@@ -115,7 +115,7 @@ public class VehicleMain {
         }
 
         // ★RequesterTask を「リスナー提供者」としてだけ使う（初期固定購読はしない）
-        RequesterTask reqHandler = new RequesterTask(client, region); // regionはダミーでOK（内部で使わない前提）
+        RequesterTask reqHandler = new RequesterTask(cfg);
         IMqttMessageListener dynListener = reqHandler.asListener();
 
         // 動的購読マネージャ（/data 固定）

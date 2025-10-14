@@ -26,7 +26,10 @@ dataset:
 path: "./dataset" # x,y,z を含む CSV ファイル群、またはサブフォルダ
 loop: true # データが尽きたら先頭に戻る
 glob: "**/*.csv" # 将来 ply/pcd に拡張可
-
+transfer:
+  send_dir: ./send
+  send_file_template: "*{region}*.txt"
+  recv_dir: ./recv
 
 coordinator:
 announce_topic: v2x/announce

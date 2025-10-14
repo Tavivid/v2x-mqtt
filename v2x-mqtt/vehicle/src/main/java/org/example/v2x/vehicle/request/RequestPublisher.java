@@ -17,19 +17,18 @@ public class RequestPublisher {
     this.client = client;
   }
 
-  public void publish(String regionId, InetSocketAddress rxUdp) {
-    long now = System.currentTimeMillis();
+  public void publish(String regionId, InetSocketAddress rx) {
     try {
       Map<String, Object> body = Map.of(
           "type", "need-pointcloud",
           "region_id", regionId,
-          "rx_udp", Map.of("ip", rxUdp.getAddress().getHostAddress(), "port", rxUdp.getPort()),
-          "ts_ms", now,
+          "rx_udp", Map.of("ip", rx.getAddress().getHostAddress(), "port", rx.getPort()),
+          "ts_ms", System.currentTimeMillis(),
           "nonce", UUID.randomUUID().toString()
       );
       byte[] payload = mapper.writeValueAsBytes(body);
       MqttMessage msg = new MqttMessage(payload);
-      msg.setQos(0);
+      msg.setQos(1);          // ★ 0 → 1 に変更（取りこぼし低減）
       msg.setRetained(false);
       String topic = "v2x/region/" + regionId + "/request";
       client.publish(topic, msg);
