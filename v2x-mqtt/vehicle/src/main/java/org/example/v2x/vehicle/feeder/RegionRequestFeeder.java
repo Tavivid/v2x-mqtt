@@ -31,10 +31,9 @@ import java.util.stream.Collectors;
 public class RegionRequestFeeder {
   private final File csv;
 
-  public RegionRequestFeeder(File csv/*, RequestPublisher publisher, boolean loop*/) {
+  public RegionRequestFeeder(File csv) {
     this.csv = csv;
   }
-  
 
   static final class Row {
     final long atMs;
