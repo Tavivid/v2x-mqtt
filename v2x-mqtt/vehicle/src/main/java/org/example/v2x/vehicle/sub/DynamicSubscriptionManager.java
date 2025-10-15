@@ -15,7 +15,6 @@ import java.util.concurrent.*;
 public class DynamicSubscriptionManager implements AutoCloseable {
 
   private final MqttClient client;
-  private final String topicSuffix; // "data" or "control"
   private final long idleMs;
   private final IMqttMessageListener listener;
 
@@ -26,9 +25,8 @@ public class DynamicSubscriptionManager implements AutoCloseable {
     t.setDaemon(true); return t;
   });
 
-  public DynamicSubscriptionManager(MqttClient client, String topicSuffix, long idleMs, IMqttMessageListener listener) {
+  public DynamicSubscriptionManager(MqttClient client, long idleMs, IMqttMessageListener listener) {
     this.client = client;
-    this.topicSuffix = Objects.requireNonNull(topicSuffix);
     this.idleMs = idleMs;
     this.listener = Objects.requireNonNull(listener);
   }
@@ -43,9 +41,9 @@ public class DynamicSubscriptionManager implements AutoCloseable {
     long now = System.currentTimeMillis();
     lastTouched.put(region, now);
     if (!subscribed.containsKey(region)) {
-      String topic = topicFor(region);
+      String topic = "v2x/region/" + region + "/data";
       try {
-        client.subscribe(topic, /*qos*/0, listener);
+        client.subscribe(topic, /*qos*/1, listener);
         subscribed.put(region, Boolean.TRUE);
         System.out.println("[DYN] subscribed " + topic);
       } catch (Exception e) {
@@ -56,7 +54,7 @@ public class DynamicSubscriptionManager implements AutoCloseable {
 
   /** 明示的に解除したいとき */
   public void unsubscribe(String region) {
-    String topic = topicFor(region);
+    String topic = "v2x/region/" + region + "/data";
     try {
       client.unsubscribe(topic);
       subscribed.remove(region);
@@ -65,10 +63,6 @@ public class DynamicSubscriptionManager implements AutoCloseable {
     } catch (Exception e) {
       System.err.println("[DYN] unsubscribe failed topic=" + topic + " err=" + e);
     }
-  }
-
-  private String topicFor(String region) {
-    return "v2x/region/" + region + "/" + topicSuffix;
   }
 
   /** 一定時間触られていない購読を解除 */
@@ -86,7 +80,7 @@ public class DynamicSubscriptionManager implements AutoCloseable {
   @Override public void close() {
     ses.shutdownNow();
     for (String r : subscribed.keySet()) {
-      try { client.unsubscribe(topicFor(r)); } catch (Exception ignore) {}
+      try { unsubscribe(r); } catch (Exception ignore) {}
     }
     subscribed.clear();
     lastTouched.clear();

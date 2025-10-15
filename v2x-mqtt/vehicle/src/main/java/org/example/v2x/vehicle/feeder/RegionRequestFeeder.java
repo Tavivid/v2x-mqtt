@@ -1,13 +1,20 @@
 package org.example.v2x.vehicle.feeder;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.eclipse.paho.client.mqttv3.*;
 import org.example.v2x.vehicle.request.RequestPublisher;
 
+import java.io.*;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * CSV を読み、指定タイミングで /request を投げる簡易フィーダ。
@@ -21,16 +28,13 @@ import java.util.List;
  * - region_id: 要求リージョン
  * - ip/port: Requester(=このVehicle)のUDP受信先
  */
-public class RegionRequestFeeder implements Runnable {
+public class RegionRequestFeeder {
   private final File csv;
-  private final RequestPublisher publisher;
-  private final boolean loop;
 
-  public RegionRequestFeeder(File csv, RequestPublisher publisher, boolean loop) {
+  public RegionRequestFeeder(File csv/*, RequestPublisher publisher, boolean loop*/) {
     this.csv = csv;
-    this.publisher = publisher;
-    this.loop = loop;
   }
+  
 
   static final class Row {
     final long atMs;
@@ -51,7 +55,7 @@ public class RegionRequestFeeder implements Runnable {
         line = line.trim();
         if (line.isEmpty() || line.startsWith("#")) continue;
         String[] tk = line.split(",", -1);
-        if (tk.length < 4) throw new IllegalArgumentException("CSV format: at_ms,region_id,ip,port at line " + lineno);
+        if (tk.length < 4) throw new IllegalArgumentException("REQ CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
         long at = Long.parseLong(tk[0].trim());
         String region = tk[1].trim();
         String ip = tk[2].trim();
@@ -59,30 +63,44 @@ public class RegionRequestFeeder implements Runnable {
         rows.add(new Row(at, region, new InetSocketAddress(ip, port)));
       }
     }
-    rows.sort((a,b) -> Long.compare(a.atMs, b.atMs));
-    return rows;
+    return rows.stream().sorted(Comparator.comparingLong(r -> r.atMs)).collect(Collectors.toList());
   }
-
-  @Override
-  public void run() {
+  
+  public void run(MqttClient client/*, DynamicSubscriptionManager dynSub*/) {
     try {
       List<Row> rows = load();
-      if (rows.isEmpty()) {
-        System.out.println("[FEED] no rows. nothing to do.");
+      if (rows.isEmpty()) { 
+        System.out.println("[FEED-REQ] no rows.");
         return;
       }
-      do {
-        long start = System.currentTimeMillis();
-        for (Row r : rows) {
-          long due = start + r.atMs;
-          long now = System.currentTimeMillis();
-          if (due > now) Thread.sleep(due - now);
-          publisher.publish(r.region, r.rx);
-        }
-        System.out.println("[FEED] sequence done" + (loop ? " (looping)":""));
-      } while (loop);
+      long start = System.currentTimeMillis();
+      ObjectMapper mapper = new ObjectMapper();
+
+      for (Row r : rows) {
+        long due = start + r.atMs;
+        long now = System.currentTimeMillis();
+        if (due > now) TimeUnit.MILLISECONDS.sleep(due - now);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("type", "need-pointcloud");
+        body.put("region_id", r.region);
+        body.put("rx_udp", Map.of("ip", r.rx.getAddress().getHostAddress(), "port", r.rx.getPort()));
+        body.put("ts_ms", System.currentTimeMillis());
+        body.put("nonce", UUID.randomUUID().toString());
+
+        byte[] payload = mapper.writeValueAsBytes(body);
+        MqttMessage msg = new MqttMessage(payload);
+        msg.setQos(1);          // 取りこぼし低減のため QoS=1
+        msg.setRetained(false);
+
+        String topic = "v2x/region/" + r.region + "/request";
+        client.publish(topic, msg);
+        System.out.printf("[FEED-REQ] published topic=%s payload=%s%n",
+            topic, new String(payload, StandardCharsets.UTF_8));
+      }
+      System.out.println("[FEED-REQ] sequence done");
     } catch (Exception e) {
-      System.err.println("[FEED] error: " + e);
+      System.err.println("[FEED-REQ] error: " + e);
     }
   }
 }

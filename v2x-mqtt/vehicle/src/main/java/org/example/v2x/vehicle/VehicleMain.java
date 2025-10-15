@@ -7,6 +7,8 @@ import org.example.v2x.common.geo.GeoHash;
 import org.example.v2x.vehicle.datasource.DatasetPointCloudSource;
 import org.example.v2x.vehicle.datasource.PointCloudSource;
 import org.example.v2x.vehicle.net.MqttClientFactory;
+import org.example.v2x.vehicle.sub.DynamicSubscriptionManager;
+import org.example.v2x.vehicle.feeder.RegionRequestFeeder;
 import org.example.v2x.vehicle.tasks.PublisherTask;
 import org.example.v2x.vehicle.tasks.RequesterTask;
 
@@ -33,78 +35,10 @@ import java.util.stream.Collectors;
  *   SUB_IDLE_MS    ... 動的購読のアイドル解除ミリ秒（既定 5000）
  */
 public class VehicleMain {
-
-    // ================= 動的購読マネージャ =================
-    static final class DynamicSubscriptionManager implements AutoCloseable {
-        private final MqttClient client;
-        private final long idleMs;
-        private final IMqttMessageListener listener;
-        private final ConcurrentMap<String, Long> lastTouched = new ConcurrentHashMap<>();
-        private final Set<String> subscribed = ConcurrentHashMap.newKeySet();
-        private final ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "dyn-sub-pruner"); t.setDaemon(true); return t;
-        });
-
-        DynamicSubscriptionManager(MqttClient client, long idleMs, IMqttMessageListener listener) {
-            this.client = client;
-            this.idleMs = idleMs;
-            this.listener = listener;
-        }
-
-        void start() {
-            ses.scheduleAtFixedRate(this::pruneIdle, idleMs, Math.max(1000L, idleMs / 3), TimeUnit.MILLISECONDS);
-        }
-
-        void touch(String region) {
-            long now = System.currentTimeMillis();
-            lastTouched.put(region, now);
-            if (!subscribed.contains(region)) {
-                String topic = "v2x/region/" + region + "/data";
-                try {
-                    client.subscribe(topic, /*qos*/1, listener);
-                    subscribed.add(region);
-                    System.out.println("[DYN] subscribed " + topic);
-                } catch (Exception e) {
-                    System.err.println("[DYN] subscribe failed topic=" + topic + " err=" + e);
-                }
-            }
-        }
-
-        void unsubscribe(String region) {
-            String topic = "v2x/region/" + region + "/data";
-            try {
-                client.unsubscribe(topic);
-                subscribed.remove(region);
-                lastTouched.remove(region);
-                System.out.println("[DYN] unsubscribed " + topic);
-            } catch (Exception e) {
-                System.err.println("[DYN] unsubscribe failed topic=" + topic + " err=" + e);
-            }
-        }
-
-        private void pruneIdle() {
-            long now = System.currentTimeMillis();
-            for (Map.Entry<String, Long> e : lastTouched.entrySet()) {
-                if (now - e.getValue() >= idleMs) unsubscribe(e.getKey());
-            }
-        }
-
-        @Override public void close() {
-            ses.shutdownNow();
-            for (String r : new ArrayList<>(subscribed)) { try { unsubscribe(r); } catch (Exception ignore) {} }
-        }
-    }
-    // =====================================================
-
     public static void main(String[] args) throws Exception {
         AppConfig cfg = AppConfig.load();
 
-        // （購読の初期値。送信には使わない）
         String region = System.getProperty("region", null);
-        if (region == null || region.isBlank()) {
-            // 例: 東京駅付近
-            region = GeoHash.encode(35.681236, 139.767125, cfg.geohashPrecision);
-        }
 
         // MQTT 接続（ClientID は Factory 側でユニーク化推奨）
         MqttClient client = MqttClientFactory.connect(cfg.mqttHost, cfg.mqttPort, cfg.mqttClientPrefix + cfg.vehicleId);
@@ -148,8 +82,10 @@ public class VehicleMain {
                 System.err.println("[FEED-REQ] CSV not found: " + reqCsv.getAbsolutePath());
             } else {
                 Thread reqFeeder = new Thread(() -> {
+                    RegionRequestFeeder feeder = new RegionRequestFeeder(reqCsv);
                     do {
-                        runRequestFeeder(reqCsv, client/*, dynSub*/); // ← ここでは購読に紐付けず送信のみ
+                        //runRequestFeeder(reqCsv, client/*, dynSub*/); // ← ここでは購読に紐付けず送信のみ
+                        feeder.run(client);
                         if (!reqLoop) break;
                         try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                     } while (true);
@@ -199,45 +135,6 @@ public class VehicleMain {
         Thread.currentThread().join();
     }
 
-    // ======= /request 発行フィーダ（CSV） =======
-    private static void runRequestFeeder(File csv, MqttClient client/*, DynamicSubscriptionManager dynSub*/) {
-        try {
-            List<RowReq> rows = loadReqCsv(csv);
-            if (rows.isEmpty()) { System.out.println("[FEED-REQ] no rows."); return; }
-            long start = System.currentTimeMillis();
-            ObjectMapper mapper = new ObjectMapper();
-
-            for (RowReq r : rows) {
-                long due = start + r.atMs;
-                long now = System.currentTimeMillis();
-                if (due > now) TimeUnit.MILLISECONDS.sleep(due - now);
-
-                // （以前はここで dynSub.touch(r.regionId) していたが、要求→購読の結合をやめるため削除）
-                // dynSub.touch(r.regionId);
-
-                Map<String, Object> body = new LinkedHashMap<>();
-                body.put("type", "need-pointcloud");
-                body.put("region_id", r.regionId);
-                body.put("rx_udp", Map.of("ip", r.rx.getAddress().getHostAddress(), "port", r.rx.getPort()));
-                body.put("ts_ms", System.currentTimeMillis());
-                body.put("nonce", UUID.randomUUID().toString());
-
-                byte[] payload = mapper.writeValueAsBytes(body);
-                MqttMessage msg = new MqttMessage(payload);
-                msg.setQos(1);          // 取りこぼし低減のため QoS=1
-                msg.setRetained(false);
-
-                String topic = "v2x/region/" + r.regionId + "/request";
-                client.publish(topic, msg);
-                System.out.printf("[FEED-REQ] published topic=%s payload=%s%n",
-                        topic, new String(payload, StandardCharsets.UTF_8));
-            }
-            System.out.println("[FEED-REQ] sequence done");
-        } catch (Exception e) {
-            System.err.println("[FEED-REQ] error: " + e);
-        }
-    }
-
     // ======= 動的購読フィーダ（CSV） =======
     private static void runSubscribeFeeder(File csv, DynamicSubscriptionManager dynSub) {
         try {
@@ -255,27 +152,6 @@ public class VehicleMain {
             System.out.println("[FEED-SUB] sequence done");
         } catch (Exception e) {
             System.err.println("[FEED-SUB] error: " + e);
-        }
-    }
-
-    // ======= CSV ローダ（送信用: at_ms,region_id,ip,port） =======
-    private static List<RowReq> loadReqCsv(File file) throws IOException {
-        try (BufferedReader br = new BufferedReader(new FileReader(file, StandardCharsets.UTF_8))) {
-            List<RowReq> out = new ArrayList<>();
-            String line; long lineno = 0;
-            while ((line = br.readLine()) != null) {
-                lineno++; line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                String[] tk = line.split(",", -1);
-                if (tk.length < 4)
-                    throw new IllegalArgumentException("REQ CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
-                long at = Long.parseLong(tk[0].trim());
-                String regionId = tk[1].trim();
-                String ip = tk[2].trim();
-                int port = Integer.parseInt(tk[3].trim());
-                out.add(new RowReq(at, regionId, new InetSocketAddress(ip, port)));
-            }
-            return out.stream().sorted(Comparator.comparingLong(r -> r.atMs)).collect(Collectors.toList());
         }
     }
 
@@ -299,10 +175,6 @@ public class VehicleMain {
     }
 
     // ======= CSV 行モデル =======
-    private static final class RowReq {
-        final long atMs; final String regionId; final InetSocketAddress rx;
-        RowReq(long atMs, String regionId, InetSocketAddress rx) { this.atMs = atMs; this.regionId = regionId; this.rx = rx; }
-    }
     private static final class RowSub {
         final long atMs; final String regionId;
         RowSub(long atMs, String regionId) { this.atMs = atMs; this.regionId = regionId; }
