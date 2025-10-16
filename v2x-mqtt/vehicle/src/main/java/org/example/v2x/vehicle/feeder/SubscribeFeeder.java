@@ -28,10 +28,10 @@ import java.util.stream.Collectors;
  * - region_id: 要求リージョン
  * - ip/port: Requester(=このVehicle)のUDP受信先
  */
-public class RegionRequestFeeder {
+public class SubscribeFeeder {
   private final File csv;
 
-  public RegionRequestFeeder(File csv) {
+  public SubscribeFeeder(File csv) {
     this.csv = csv;
   }
 

@@ -1,6 +1,7 @@
 package org.example.v2x.vehicle;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.eclipse.paho.client.mqttv3.*;
 import org.example.v2x.common.config.AppConfig;
 import org.example.v2x.common.geo.GeoHash;
@@ -8,7 +9,7 @@ import org.example.v2x.vehicle.datasource.DatasetPointCloudSource;
 import org.example.v2x.vehicle.datasource.PointCloudSource;
 import org.example.v2x.vehicle.net.MqttClientFactory;
 import org.example.v2x.vehicle.sub.DynamicSubscriptionManager;
-import org.example.v2x.vehicle.feeder.RegionRequestFeeder;
+import org.example.v2x.vehicle.feeder.SubscribeFeeder;
 import org.example.v2x.vehicle.tasks.PublisherTask;
 import org.example.v2x.vehicle.tasks.RequesterTask;
 
@@ -19,6 +20,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import org.example.v2x.vehicle.feeder.PublishFeeder;
 
 /**
  * 現行仕様の Vehicle エントリポイント（CSVフィード維持版）
@@ -82,10 +85,9 @@ public class VehicleMain {
                 System.err.println("[FEED-REQ] CSV not found: " + reqCsv.getAbsolutePath());
             } else {
                 Thread reqFeeder = new Thread(() -> {
-                    RegionRequestFeeder feeder = new RegionRequestFeeder(reqCsv);
+                    SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv);
                     do {
-                        //runRequestFeeder(reqCsv, client/*, dynSub*/); // ← ここでは購読に紐付けず送信のみ
-                        feeder.run(client);
+                        sfeeder.run(client);
                         if (!reqLoop) break;
                         try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                     } while (true);
@@ -107,8 +109,9 @@ public class VehicleMain {
                 System.err.println("[FEED-SUB] CSV not found: " + subCsv.getAbsolutePath());
             } else {
                 Thread subFeeder = new Thread(() -> {
+                    PublishFeeder pfeeder = new PublishFeeder(subCsv);
                     do {
-                        runSubscribeFeeder(subCsv, dynSub); // touch(region) のみ。送信はしない
+                        pfeeder.run(dynSub);
                         if (!subLoop) break;
                         try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                     } while (true);
@@ -133,50 +136,5 @@ public class VehicleMain {
         }));
         Runtime.getRuntime().addShutdownHook(new Thread(dynSub::close));
         Thread.currentThread().join();
-    }
-
-    // ======= 動的購読フィーダ（CSV） =======
-    private static void runSubscribeFeeder(File csv, DynamicSubscriptionManager dynSub) {
-        try {
-            List<RowSub> rows = loadSubCsv(csv);
-            if (rows.isEmpty()) { System.out.println("[FEED-SUB] no rows."); return; }
-            long start = System.currentTimeMillis();
-
-            for (RowSub r : rows) {
-                long due = start + r.atMs;
-                long now = System.currentTimeMillis();
-                if (due > now) TimeUnit.MILLISECONDS.sleep(due - now);
-                dynSub.touch(r.regionId);
-                System.out.println("[FEED-SUB] touch region=" + r.regionId);
-            }
-            System.out.println("[FEED-SUB] sequence done");
-        } catch (Exception e) {
-            System.err.println("[FEED-SUB] error: " + e);
-        }
-    }
-
-    // ======= CSV ローダ（購読用: at_ms,region_id） =======
-    private static List<RowSub> loadSubCsv(File file) throws IOException {
-        try (BufferedReader br = new BufferedReader(new FileReader(file, StandardCharsets.UTF_8))) {
-            List<RowSub> out = new ArrayList<>();
-            String line; long lineno = 0;
-            while ((line = br.readLine()) != null) {
-                lineno++; line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                String[] tk = line.split(",", -1);
-                if (tk.length < 2)
-                    throw new IllegalArgumentException("SUB CSV format error at line " + lineno + " (expect: at_ms,region_id)");
-                long at = Long.parseLong(tk[0].trim());
-                String regionId = tk[1].trim();
-                out.add(new RowSub(at, regionId));
-            }
-            return out.stream().sorted(Comparator.comparingLong(r -> r.atMs)).collect(Collectors.toList());
-        }
-    }
-
-    // ======= CSV 行モデル =======
-    private static final class RowSub {
-        final long atMs; final String regionId;
-        RowSub(long atMs, String regionId) { this.atMs = atMs; this.regionId = regionId; }
     }
 }
