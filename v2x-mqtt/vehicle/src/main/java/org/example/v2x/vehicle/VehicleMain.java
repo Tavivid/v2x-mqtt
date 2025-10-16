@@ -11,7 +11,6 @@ import org.example.v2x.vehicle.net.MqttClientFactory;
 import org.example.v2x.vehicle.sub.DynamicSubscriptionManager;
 import org.example.v2x.vehicle.feeder.SubscribeFeeder;
 import org.example.v2x.vehicle.tasks.PublisherTask;
-import org.example.v2x.vehicle.tasks.RequesterTask;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -26,18 +25,16 @@ import org.example.v2x.vehicle.feeder.PublishFeeder;
 /**
  * 現行仕様の Vehicle エントリポイント（CSVフィード維持版）
  *
- * - /data は RequesterTask をリスナーとして購読（fetch-request受信→UDP直送は RequesterTask 側）
- * - /request の発行は CSV（REQ_FEED_CSV）でスケジュール
- * - 動的購読は CSV（SUB_FEED_CSV）で制御（一定時間(SUB_IDLE_MS)で自動解除）
+ * - /data は RequesterTask をリスナーとして購読（fetch-request受信→UDP直送は RequesterTask 側） -
+ * /request の発行は CSV（REQ_FEED_CSV）でスケジュール - 動的購読は
+ * CSV（SUB_FEED_CSV）で制御（一定時間(SUB_IDLE_MS)で自動解除）
  *
- * 環境変数:
- *   REQ_FEED_CSV   ... /request 送信用CSV (at_ms,region_id,ip,port)
- *   REQ_FEED_LOOP  ... "1" ならループ
- *   SUB_FEED_CSV   ... 動的購読用CSV (at_ms,region_id)
- *   SUB_FEED_LOOP  ... "1" ならループ
- *   SUB_IDLE_MS    ... 動的購読のアイドル解除ミリ秒（既定 5000）
+ * 環境変数: REQ_FEED_CSV ... /request 送信用CSV (at_ms,region_id,ip,port)
+ * REQ_FEED_LOOP ... "1" ならループ SUB_FEED_CSV ... 動的購読用CSV (at_ms,region_id)
+ * SUB_FEED_LOOP ... "1" ならループ SUB_IDLE_MS ... 動的購読のアイドル解除ミリ秒（既定 5000）
  */
 public class VehicleMain {
+
     public static void main(String[] args) throws Exception {
         AppConfig cfg = AppConfig.load();
 
@@ -58,16 +55,19 @@ public class VehicleMain {
             System.err.println("[Vehicle] Dataset not available: " + e.getMessage());
             startPublisher = false;
         }
-        if (startPublisher && source != null) {
-            new Thread(new PublisherTask(client, cfg.vehicleId, region, cfg.publishRateHz, cfg.maxPointsPerChunk, source),
-                    "Publisher").start();
-        } else {
-            System.out.println("[Vehicle] No dataset -> PublisherTask is not started.");
-        }
 
-        // === /data 受信（fetch-request）: RequesterTask をリスナーとして利用 ===
-        RequesterTask reqHandler = new RequesterTask(cfg);
-        IMqttMessageListener listener = reqHandler.asListener();
+        PublisherTask pubHandler = new PublisherTask(
+            client,
+            cfg.vehicleId,
+            /* regionId */ region,
+            /* publishRateHz */ startPublisher ? cfg.publishRateHz : 0.0, // 0 で publish 停止
+            cfg.maxPointsPerChunk,
+            /* source */ startPublisher ? source : null,
+            cfg
+        );
+
+        new Thread(pubHandler, "Publisher").start();
+        IMqttMessageListener listener = pubHandler.asListener();
 
         // 追加で、動的購読（任意・SUB_FEED_CSVが与えられたときだけ）
         long idleMs = Long.parseLong(System.getenv().getOrDefault("SUB_IDLE_MS", "50000"));
@@ -88,8 +88,13 @@ public class VehicleMain {
                     SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv);
                     do {
                         sfeeder.run(client);
-                        if (!reqLoop) break;
-                        try { Thread.sleep(100); } catch (InterruptedException ignored) {}
+                        if (!reqLoop) {
+                            break;
+                        }
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException ignored) {
+                        }
                     } while (true);
                 }, "request-feeder");
                 reqFeeder.setDaemon(true);
@@ -112,8 +117,13 @@ public class VehicleMain {
                     PublishFeeder pfeeder = new PublishFeeder(subCsv);
                     do {
                         pfeeder.run(dynSub);
-                        if (!subLoop) break;
-                        try { Thread.sleep(100); } catch (InterruptedException ignored) {}
+                        if (!subLoop) {
+                            break;
+                        }
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException ignored) {
+                        }
                     } while (true);
                 }, "subscribe-feeder");
                 subFeeder.setDaemon(true);
@@ -132,7 +142,10 @@ public class VehicleMain {
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { udpSink.close(); } catch (Exception ignore) {}
+            try {
+                udpSink.close();
+            } catch (Exception ignore) {
+            }
         }));
         Runtime.getRuntime().addShutdownHook(new Thread(dynSub::close));
         Thread.currentThread().join();
