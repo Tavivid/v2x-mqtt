@@ -50,7 +50,7 @@ public class PublisherTask implements Runnable {
         this.sendTemplate = (cfg.transferSendTemplate == null || cfg.transferSendTemplate.isBlank())
                 ? "*{region}*"
                 : cfg.transferSendTemplate;
-        System.out.println("[Publisher] SEND_DIR=" + sendDir + " TEMPLATE=" + sendTemplate);
+        System.out.println("[PUB] SEND_DIR=" + sendDir + " TEMPLATE=" + sendTemplate);
 
     }
 
@@ -73,13 +73,13 @@ public class PublisherTask implements Runnable {
 
             // regionId を JSON か topic から取得
             String region = extractRegionId(payload, topic);
-            System.out.println("[Publisher] fetch-request for region=" + region);
+            System.out.println("[PUB] fetch-request for region=" + region);
 
             @SuppressWarnings("unchecked")
             Map<String, Object> obj = Jsons.GSON.fromJson(payload, Map.class);
             Object rx = (obj != null) ? obj.get("rx_udp") : null;
             if (!(rx instanceof Map)) {
-                System.out.println("[Publisher] fetch-request has no rx_udp -> skip");
+                System.out.println("[PUB] fetch-request has no rx_udp -> skip");
                 return;
             }
             String ip = String.valueOf(((Map<?, ?>) rx).get("ip"));
@@ -88,7 +88,7 @@ public class PublisherTask implements Runnable {
             // ファイル選択→UDP 送信
             handleFetch(region, ip, port);
         } catch (Exception e) {
-            System.err.println("[Publisher] fetch-parse error: " + e.getMessage());
+            System.err.println("[PUB] fetch-parse error: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -109,23 +109,23 @@ public class PublisherTask implements Runnable {
     private void handleFetch(String region, String ip, int port) {
         try {
             if (!Files.isDirectory(sendDir)) {
-                System.out.println("[Publisher] SEND_DIR not a directory: " + sendDir);
+                System.out.println("[PUB] SEND_DIR not a directory: " + sendDir);
                 return;
             }
             Path file = pickLatestForRegion(sendDir, sendTemplate, region);
             if (file == null) {
-                System.out.println("[Publisher] no file matched for region=" + region + " in " + sendDir);
+                System.out.println("[PUB] no file matched for region=" + region + " in " + sendDir);
                 return;
             }
             byte[] data = Files.readAllBytes(file);
             udpSend(data, ip, port);
 
             // ★ ファイル名は Publisher 側で出力（要求に合わせた責務）
-            System.out.println("[Publisher] sent file=" + file.getFileName()
+            System.out.println("[PUB] sent file=" + file.getFileName()
                     + " (" + data.length + " bytes) to " + ip + ":" + port
                     + " for region=" + region);
         } catch (Exception e) {
-            System.err.println("[Publisher] fetch-send error: " + e.getMessage());
+            System.err.println("[PUB] fetch-send error: " + e.getMessage());
             e.printStackTrace();
         }
     }
