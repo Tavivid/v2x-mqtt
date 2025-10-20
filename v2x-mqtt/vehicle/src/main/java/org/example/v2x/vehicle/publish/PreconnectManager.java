@@ -1,4 +1,4 @@
-package org.example.v2x.vehicle.sub;
+package org.example.v2x.vehicle.publish;
 
 import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
 import org.eclipse.paho.client.mqttv3.MqttClient;
@@ -12,7 +12,7 @@ import java.util.concurrent.*;
  * - touch(region) を呼ぶと ensure subscribe
  * - 一定時間使われないリージョンは自動で unsubscribe
  */
-public class DynamicSubscriptionManager implements AutoCloseable {
+public class PreconnectManager implements AutoCloseable {
 
   private final MqttClient client;
   private final long idleMs;
@@ -25,7 +25,7 @@ public class DynamicSubscriptionManager implements AutoCloseable {
     t.setDaemon(true); return t;
   });
 
-  public DynamicSubscriptionManager(MqttClient client, long idleMs, IMqttMessageListener listener) {
+  public PreconnectManager(MqttClient client, long idleMs, IMqttMessageListener listener) {
     this.client = client;
     this.idleMs = idleMs;
     this.listener = Objects.requireNonNull(listener);
@@ -45,9 +45,9 @@ public class DynamicSubscriptionManager implements AutoCloseable {
       try {
         client.subscribe(topic, /*qos*/1, listener);
         subscribed.put(region, Boolean.TRUE);
-        System.out.println("[DYN] subscribed " + topic);
+        System.out.println("[PUB] Preconnecting for topic " + topic);
       } catch (Exception e) {
-        System.err.println("[DYN] subscribe failed topic=" + topic + " err=" + e);
+        System.err.println("[PUB] Failed to preconnect for topic=" + topic + " err=" + e);
       }
     }
   }
@@ -59,9 +59,9 @@ public class DynamicSubscriptionManager implements AutoCloseable {
       client.unsubscribe(topic);
       subscribed.remove(region);
       lastTouched.remove(region);
-      System.out.println("[DYN] unsubscribed " + topic);
+      System.out.println("[PUB] Disconnecting for topic " + topic);
     } catch (Exception e) {
-      System.err.println("[DYN] unsubscribe failed topic=" + topic + " err=" + e);
+      System.err.println("[PUB] Failed to disconnect for topic=" + topic + " err=" + e);
     }
   }
 

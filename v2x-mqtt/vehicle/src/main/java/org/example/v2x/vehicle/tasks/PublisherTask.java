@@ -73,7 +73,7 @@ public class PublisherTask implements Runnable {
 
             // regionId を JSON か topic から取得
             String region = extractRegionId(payload, topic);
-            System.out.println("[PUB] fetch-request for region=" + region);
+            System.out.println("[PUB] received fetch-request for region=" + region);
 
             @SuppressWarnings("unchecked")
             Map<String, Object> obj = Jsons.GSON.fromJson(payload, Map.class);

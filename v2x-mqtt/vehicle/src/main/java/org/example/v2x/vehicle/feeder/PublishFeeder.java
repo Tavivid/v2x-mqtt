@@ -2,7 +2,7 @@ package org.example.v2x.vehicle.feeder;
 
 import org.eclipse.paho.client.mqttv3.*;
 import org.example.v2x.vehicle.request.RequestPublisher;
-import org.example.v2x.vehicle.sub.DynamicSubscriptionManager;
+import org.example.v2x.vehicle.publish.PreconnectManager;
 
 import java.io.*;
 import java.io.BufferedReader;
@@ -53,7 +53,7 @@ public class PublishFeeder {
         if (line.isEmpty() || line.startsWith("#")) continue;
         String[] tk = line.split(",", -1);
         if (tk.length < 2)
-          throw new IllegalArgumentException("SUB CSV format error at line " + lineno + " (expect: at_ms,region_id)");
+          throw new IllegalArgumentException("PUB CSV format error at line " + lineno + " (expect: at_ms,region_id)");
         long at = Long.parseLong(tk[0].trim());
         String region = tk[1].trim();
         rows.add(new Row(at, region));
@@ -62,11 +62,11 @@ public class PublishFeeder {
     return rows.stream().sorted(Comparator.comparingLong(r -> r.atMs)).collect(Collectors.toList());
   }
   
-  public void run(DynamicSubscriptionManager dynSub) {
+  public void run(PreconnectManager prec) {
     try {
       List<Row> rows = load();
       if (rows.isEmpty()) { 
-        System.out.println("[FEED-SUB] no rows.");
+        System.out.println("[PUB] csv has no rows.");
         return;
       }
       long start = System.currentTimeMillis();
@@ -75,12 +75,12 @@ public class PublishFeeder {
         long due = start + r.atMs;
         long now = System.currentTimeMillis();
         if (due > now) TimeUnit.MILLISECONDS.sleep(due - now);
-        dynSub.touch(r.region);
-        System.out.println("[FEED-SUB] touch region=" + r.region);
+        prec.touch(r.region);
+        System.out.println("[PUB] Publishing availability keep-alive region=" + r.region);
       }
-      System.out.println("[FEED-SUB] sequence done");
+      System.out.println("[PUB] csv sequence done");
     } catch (Exception e) {
-      System.err.println("[FEED-SUB] error: " + e);
+      System.err.println("[PUB] error: " + e);
     }
   }
 }

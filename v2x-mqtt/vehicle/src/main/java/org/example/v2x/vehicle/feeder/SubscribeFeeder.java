@@ -54,7 +54,7 @@ public class SubscribeFeeder {
         line = line.trim();
         if (line.isEmpty() || line.startsWith("#")) continue;
         String[] tk = line.split(",", -1);
-        if (tk.length < 4) throw new IllegalArgumentException("REQ CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
+        if (tk.length < 4) throw new IllegalArgumentException("SUB CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
         long at = Long.parseLong(tk[0].trim());
         String region = tk[1].trim();
         String ip = tk[2].trim();
@@ -69,7 +69,7 @@ public class SubscribeFeeder {
     try {
       List<Row> rows = load();
       if (rows.isEmpty()) { 
-        System.out.println("[FEED-REQ] no rows.");
+        System.out.println("[SUB] csv has no rows.");
         return;
       }
       long start = System.currentTimeMillis();
@@ -94,12 +94,12 @@ public class SubscribeFeeder {
 
         String topic = "v2x/region/" + r.region + "/request";
         client.publish(topic, msg);
-        System.out.printf("[FEED-REQ] published topic=%s payload=%s%n",
+        System.out.printf("[SUB] subscribed topic=%s payload=%s%n",
             topic, new String(payload, StandardCharsets.UTF_8));
       }
-      System.out.println("[FEED-REQ] sequence done");
+      System.out.println("[SUB] csv sequence done");
     } catch (Exception e) {
-      System.err.println("[FEED-REQ] error: " + e);
+      System.err.println("[SUB] error: " + e);
     }
   }
 }

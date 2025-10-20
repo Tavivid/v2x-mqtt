@@ -8,7 +8,7 @@ import org.example.v2x.common.geo.GeoHash;
 import org.example.v2x.vehicle.datasource.DatasetPointCloudSource;
 import org.example.v2x.vehicle.datasource.PointCloudSource;
 import org.example.v2x.vehicle.net.MqttClientFactory;
-import org.example.v2x.vehicle.sub.DynamicSubscriptionManager;
+import org.example.v2x.vehicle.publish.PreconnectManager;
 import org.example.v2x.vehicle.feeder.SubscribeFeeder;
 import org.example.v2x.vehicle.tasks.PublisherTask;
 
@@ -22,17 +22,6 @@ import java.util.stream.Collectors;
 
 import org.example.v2x.vehicle.feeder.PublishFeeder;
 
-/**
- * 現行仕様の Vehicle エントリポイント（CSVフィード維持版）
- *
- * - /data は RequesterTask をリスナーとして購読（fetch-request受信→UDP直送は RequesterTask 側） -
- * /request の発行は CSV（REQ_FEED_CSV）でスケジュール - 動的購読は
- * CSV（SUB_FEED_CSV）で制御（一定時間(SUB_IDLE_MS)で自動解除）
- *
- * 環境変数: REQ_FEED_CSV ... /request 送信用CSV (at_ms,region_id,ip,port)
- * REQ_FEED_LOOP ... "1" ならループ SUB_FEED_CSV ... 動的購読用CSV (at_ms,region_id)
- * SUB_FEED_LOOP ... "1" ならループ SUB_IDLE_MS ... 動的購読のアイドル解除ミリ秒（既定 5000）
- */
 public class VehicleMain {
 
     public static void main(String[] args) throws Exception {
@@ -69,20 +58,20 @@ public class VehicleMain {
         new Thread(pubHandler, "Publisher").start();
         IMqttMessageListener listener = pubHandler.asListener();
 
-        // 追加で、動的購読（任意・SUB_FEED_CSVが与えられたときだけ）
+        // SUB_FEED_CSVを見て発行可能領域のトピックに接続
         long idleMs = Long.parseLong(System.getenv().getOrDefault("SUB_IDLE_MS", "50000"));
-        DynamicSubscriptionManager dynSub = new DynamicSubscriptionManager(client, idleMs, listener);
-        dynSub.start();
+        PreconnectManager prec = new PreconnectManager(client, idleMs, listener);
+        prec.start();
 
         System.out.println("Vehicle started (CSV feeders enabled; /data subscribed with RequesterTask) defaultRegion=" + region + ", dataset=" + cfg.datasetPath);
 
         // ====== 送信用CSV（REQ_FEED_CSV）: at_ms,region_id,ip,port ======
-        String reqCsvPath = System.getenv("REQ_FEED_CSV");
-        boolean reqLoop = "1".equals(System.getenv("REQ_FEED_LOOP"));
+        String reqCsvPath = System.getenv("SUB_FEED_CSV");
+        boolean reqLoop = "1".equals(System.getenv("SUB_FEED_LOOP"));
         if (reqCsvPath != null && !reqCsvPath.isBlank()) {
             File reqCsv = new File(reqCsvPath);
             if (!reqCsv.exists()) {
-                System.err.println("[FEED-REQ] CSV not found: " + reqCsv.getAbsolutePath());
+                System.err.println("[SUB] CSV not found: " + reqCsv.getAbsolutePath());
             } else {
                 Thread reqFeeder = new Thread(() -> {
                     SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv);
@@ -99,24 +88,24 @@ public class VehicleMain {
                 }, "request-feeder");
                 reqFeeder.setDaemon(true);
                 reqFeeder.start();
-                System.out.println("[FEED-REQ] started file=" + reqCsv.getAbsolutePath() + " loop=" + reqLoop);
+                System.out.println("[SUB] csv sequence started file=" + reqCsv.getAbsolutePath() + " loop=" + reqLoop);
             }
         } else {
-            System.out.println("[FEED-REQ] REQ_FEED_CSV not set -> no /request will be published.");
+            System.out.println("[SUB] SUB_FEED_CSV not set -> no /request will be sended.");
         }
 
         // ====== 購読用CSV（SUB_FEED_CSV）: at_ms,region_id ======
-        String subCsvPath = System.getenv("SUB_FEED_CSV");
-        boolean subLoop = "1".equals(System.getenv("SUB_FEED_LOOP"));
+        String subCsvPath = System.getenv("PUB_FEED_CSV");
+        boolean subLoop = "1".equals(System.getenv("PUB_FEED_LOOP"));
         if (subCsvPath != null && !subCsvPath.isBlank()) {
             File subCsv = new File(subCsvPath);
             if (!subCsv.exists()) {
-                System.err.println("[FEED-SUB] CSV not found: " + subCsv.getAbsolutePath());
+                System.err.println("[PUB] CSV not found: " + subCsv.getAbsolutePath());
             } else {
                 Thread subFeeder = new Thread(() -> {
                     PublishFeeder pfeeder = new PublishFeeder(subCsv);
                     do {
-                        pfeeder.run(dynSub);
+                        pfeeder.run(prec);
                         if (!subLoop) {
                             break;
                         }
@@ -128,10 +117,10 @@ public class VehicleMain {
                 }, "subscribe-feeder");
                 subFeeder.setDaemon(true);
                 subFeeder.start();
-                System.out.println("[FEED-SUB] started file=" + subCsv.getAbsolutePath() + " loop=" + subLoop);
+                System.out.println("[PUB] csv sequence started file=" + subCsv.getAbsolutePath() + " loop=" + subLoop);
             }
         } else {
-            System.out.println("[FEED-SUB] SUB_FEED_CSV not set -> no dynamic /data subscriptions will be added.");
+            System.out.println("[PUB] PUB_FEED_CSV not set -> no /data preconnection will be added.");
         }
 
         // 設定ファイルの存在確認（Shade/Jarに埋め込む前提）
@@ -147,7 +136,7 @@ public class VehicleMain {
             } catch (Exception ignore) {
             }
         }));
-        Runtime.getRuntime().addShutdownHook(new Thread(dynSub::close));
+        Runtime.getRuntime().addShutdownHook(new Thread(prec::close));
         Thread.currentThread().join();
     }
 }
