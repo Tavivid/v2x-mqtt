@@ -78,13 +78,13 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 # VEHICLE_ID は AppConfig の YAML を環境変数で上書き可能（重複起動時は必ず変えるか ClientID をユニーク化）
 # 購読者両側
 VEHICLE_ID=vehA \
-REQ_FEED_CSV="requests.csv" \
-REQ_FEED_LOOP=1 \
+SUB_FEED_CSV="subscribe.csv" \
+SUB_FEED_LOOP=1 \
 ./gradlew --no-daemon :vehicle:run
 
 # 発行者両側
 VEHICLE_ID=vehB \
-PUB_FEED_CSV="subscribe.csv" \
+PUB_FEED_CSV="publish.csv" \
 PUB_FEED_LOOP=0 \
 ./gradlew --no-daemon :vehicle:run
 

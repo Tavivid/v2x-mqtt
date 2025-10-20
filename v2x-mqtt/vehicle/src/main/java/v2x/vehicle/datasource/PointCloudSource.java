@@ -1,6 +1,6 @@
-package org.example.v2x.vehicle.datasource;
+package v2x.vehicle.datasource;
 
-import org.example.v2x.common.model.PointCloudChunk;
+import v2x.vehicle.model.PointCloudChunk;
 
 /**
  * 点群供給インターフェイス。データセット/センサ/ネットワークなど実装差し替え可能。

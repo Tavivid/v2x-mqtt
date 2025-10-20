@@ -1,6 +1,6 @@
-package org.example.v2x.vehicle.net;
+package v2x.vehicle.net;
 
-import org.example.v2x.common.config.AppConfig;
+import v2x.vehicle.config.AppConfig;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;

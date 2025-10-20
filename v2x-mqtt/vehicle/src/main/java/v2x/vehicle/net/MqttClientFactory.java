@@ -1,4 +1,4 @@
-package org.example.v2x.vehicle.net;
+package v2x.vehicle.net;
 
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;

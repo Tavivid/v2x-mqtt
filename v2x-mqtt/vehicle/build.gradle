@@ -4,7 +4,7 @@ plugins {
 
 application {
     //mainClass = 'app.VehicleAgent'
-    mainClass = 'org.example.v2x.vehicle.VehicleMain'
+    mainClass = 'v2x.vehicle.VehicleMain'
 }
 
 

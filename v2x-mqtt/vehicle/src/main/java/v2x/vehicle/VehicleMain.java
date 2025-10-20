@@ -1,16 +1,16 @@
-package org.example.v2x.vehicle;
+package v2x.vehicle;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.eclipse.paho.client.mqttv3.*;
-import org.example.v2x.common.config.AppConfig;
-import org.example.v2x.common.geo.GeoHash;
-import org.example.v2x.vehicle.datasource.DatasetPointCloudSource;
-import org.example.v2x.vehicle.datasource.PointCloudSource;
-import org.example.v2x.vehicle.net.MqttClientFactory;
-import org.example.v2x.vehicle.publish.PreconnectManager;
-import org.example.v2x.vehicle.feeder.SubscribeFeeder;
-import org.example.v2x.vehicle.tasks.PublisherTask;
+import v2x.vehicle.config.AppConfig;
+import v2x.vehicle.geo.GeoHash;
+import v2x.vehicle.datasource.DatasetPointCloudSource;
+import v2x.vehicle.datasource.PointCloudSource;
+import v2x.vehicle.net.MqttClientFactory;
+import v2x.vehicle.publish.PreconnectManager;
+import v2x.vehicle.feeder.SubscribeFeeder;
+import v2x.vehicle.tasks.PublisherTask;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -20,7 +20,7 @@ import java.util.concurrent.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import org.example.v2x.vehicle.feeder.PublishFeeder;
+import v2x.vehicle.feeder.PublishFeeder;
 
 public class VehicleMain {
 
@@ -32,7 +32,7 @@ public class VehicleMain {
         // MQTT 接続（ClientID は Factory 側でユニーク化推奨）
         MqttClient client = MqttClientFactory.connect(cfg.mqttHost, cfg.mqttPort, cfg.mqttClientPrefix + cfg.vehicleId);
 
-        org.example.v2x.vehicle.net.UdpSinkService udpSink = new org.example.v2x.vehicle.net.UdpSinkService(cfg);
+        v2x.vehicle.net.UdpSinkService udpSink = new v2x.vehicle.net.UdpSinkService(cfg);
         udpSink.start();
 
         // Publisher（データセットがあれば起動／無ければ起動しない）

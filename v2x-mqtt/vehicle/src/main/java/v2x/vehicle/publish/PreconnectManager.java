@@ -1,4 +1,4 @@
-package org.example.v2x.vehicle.publish;
+package v2x.vehicle.publish;
 
 import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
 import org.eclipse.paho.client.mqttv3.MqttClient;

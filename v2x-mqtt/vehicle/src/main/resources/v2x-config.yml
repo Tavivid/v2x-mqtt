@@ -12,7 +12,7 @@ recv_port: 51235
 
 
 region:
-geohash_precision: 8 # 8〜10 が推奨
+geohash_precision: 9 # 8〜10 が推奨
 ttl_seconds: 5 # 地域内のアベイラビリティ情報の寿命
 
 
@@ -26,7 +26,10 @@ dataset:
 path: "./dataset" # x,y,z を含む CSV ファイル群、またはサブフォルダ
 loop: true # データが尽きたら先頭に戻る
 glob: "**/*.csv" # 将来 ply/pcd に拡張可
-
+transfer:
+  send_dir: ./send
+  send_file_template: "*{region}*.txt"
+  recv_dir: ./recv
 
 coordinator:
 announce_topic: v2x/announce

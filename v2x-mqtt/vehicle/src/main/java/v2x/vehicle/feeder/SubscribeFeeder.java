@@ -1,8 +1,8 @@
-package org.example.v2x.vehicle.feeder;
+package v2x.vehicle.feeder;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.paho.client.mqttv3.*;
-import org.example.v2x.vehicle.request.RequestPublisher;
+import v2x.vehicle.request.RequestPublisher;
 
 import java.io.*;
 import java.io.BufferedReader;

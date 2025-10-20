@@ -1,4 +1,4 @@
-package org.example.v2x.vehicle.request;
+package v2x.vehicle.request;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.paho.client.mqttv3.MqttClient;

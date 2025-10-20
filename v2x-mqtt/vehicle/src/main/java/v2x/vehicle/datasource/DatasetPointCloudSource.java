@@ -1,7 +1,7 @@
-package org.example.v2x.vehicle.datasource;
+package v2x.vehicle.datasource;
 
-import org.example.v2x.common.model.Point3D;
-import org.example.v2x.common.model.PointCloudChunk;
+import v2x.vehicle.model.Point3D;
+import v2x.vehicle.model.PointCloudChunk;
 
 import java.io.BufferedReader;
 import java.io.IOException;

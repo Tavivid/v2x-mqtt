@@ -12,7 +12,7 @@ recv_port: 51235
 
 
 region:
-geohash_precision: 8 # 8〜10 が推奨
+geohash_precision: 9 # 8〜10 が推奨
 ttl_seconds: 5 # 地域内のアベイラビリティ情報の寿命
 
 

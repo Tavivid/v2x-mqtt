@@ -1,14 +1,14 @@
-package org.example.v2x.vehicle.tasks;
+package v2x.vehicle.tasks;
 
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.example.v2x.common.config.AppConfig;
-import org.example.v2x.common.model.PointCloudChunk;
-import org.example.v2x.common.net.DedupCache;
-import org.example.v2x.common.net.Topics;
-import org.example.v2x.common.util.Jsons;
-import org.example.v2x.vehicle.datasource.PointCloudSource;
+import v2x.vehicle.config.AppConfig;
+import v2x.vehicle.model.PointCloudChunk;
+import v2x.vehicle.net.DedupCache;
+import v2x.vehicle.net.Topics;
+import v2x.vehicle.util.Jsons;
+import v2x.vehicle.datasource.PointCloudSource;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
