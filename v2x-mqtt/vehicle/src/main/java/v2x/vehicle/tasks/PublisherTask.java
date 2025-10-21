@@ -37,6 +37,22 @@ public class PublisherTask implements Runnable {
     private final Path sendDir;
     private final String sendTemplate;
 
+    private static final class Job {
+        final String region;
+        final String ip;
+        final int port;
+        final int priority;
+        final long enqTs;
+        Job(String region, String ip, int port, int priority, long enqTs) {
+            this.region = region; this.ip = ip; this.port = port;
+            this.priority = priority; this.enqTs = enqTs;
+        }
+    }
+    private final PriorityBlockingQueue<Job> outQ =
+        new PriorityBlockingQueue<>(1024,
+            Comparator.<Job>comparingInt(j -> j.priority).reversed()
+                      .thenComparingLong(j -> j.enqTs));
+
     public PublisherTask(MqttClient mqtt, String vehicleId, String regionId,
             double publishRateHz, int maxPointsPerChunk, PointCloudSource source, AppConfig cfg) {
         this.mqtt = mqtt;
@@ -84,9 +100,18 @@ public class PublisherTask implements Runnable {
             }
             String ip = String.valueOf(((Map<?, ?>) rx).get("ip"));
             int port = ((Number) ((Map<?, ?>) rx).get("port")).intValue();
-
+            
+            int priority = 0;
+            try {
+                Object pr = (obj != null) ? obj.get("priority") : null;
+                if (pr instanceof Number) priority = ((Number) pr).intValue();
+            } catch (Exception ignore) {}
+            outQ.offer(new Job(region, ip, port, priority, System.currentTimeMillis()));
+            // ログ（必要最小限）
+            System.out.println("[PUB] enqueued fetch job region=" + region
+                    + " pri=" + priority + " dst=" + ip + ":" + port);
             // ファイル選択→UDP 送信
-            handleFetch(region, ip, port);
+            //handleFetch(region, ip, port);
         } catch (Exception e) {
             System.err.println("[PUB] fetch-parse error: " + e.getMessage());
             e.printStackTrace();
@@ -162,6 +187,11 @@ public class PublisherTask implements Runnable {
                 var avail = Jsons.GSON.toJson(java.util.Map.of("vehicleId", vehicleId));
                 mqtt.publish(Topics.availability(regionId), new MqttMessage(avail.getBytes(StandardCharsets.UTF_8)));
 
+                Job j;
+                while ((j = outQ.poll()) != null) {
+                    handleFetch(j.region, j.ip, j.port);
+                }
+                
                 // データセットが与えられている場合のみ点群 publish（不要なら source を null に）
                 if (source != null && publishRateHz > 0) {
                     PointCloudChunk chunk = source.nextChunk(regionId, vehicleId, maxPointsPerChunk);

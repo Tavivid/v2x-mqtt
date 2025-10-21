@@ -92,6 +92,7 @@ public class Coordinator {
       }
 
       Map<String, Object> rxUdp = null;
+      int priority = 0;
       try {
         @SuppressWarnings("unchecked")
         Map<String, Object> reqObj = new ObjectMapper().readValue(payload, Map.class);
@@ -104,6 +105,10 @@ public class Coordinator {
           if (ipObj != null && portObj instanceof Number) {
             rxUdp = Map.of("ip", String.valueOf(ipObj), "port", ((Number) portObj).intValue());
           }
+        }
+        Object pr = (reqObj != null) ? reqObj.get("priority") : null;
+        if (pr instanceof Number) {
+          priority = ((Number) pr).intValue();
         }
       } catch (Exception ignore) {
         // パース失敗時は rx_udp なしで続行（既存動作を壊さない）
@@ -119,6 +124,7 @@ public class Coordinator {
       fetch.put("request_id", requestId);
       fetch.put("ts_ms",      now);
       fetch.put("ttl_ms",     ttlMs);
+      fetch.put("priority",   priority);
       if (rxUdp != null) {
         fetch.put("rx_udp", rxUdp);
       }
