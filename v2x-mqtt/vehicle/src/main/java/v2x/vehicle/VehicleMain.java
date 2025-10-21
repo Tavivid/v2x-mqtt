@@ -65,7 +65,7 @@ public class VehicleMain {
 
         System.out.println("Vehicle started (CSV feeders enabled; /data subscribed with RequesterTask) defaultRegion=" + region + ", dataset=" + cfg.datasetPath);
 
-        // ====== 送信用CSV（REQ_FEED_CSV）: at_ms,region_id,ip,port ======
+        // ====== 購読用CSV（REQ_FEED_CSV）: at_ms,region_id,ip,port ======
         String reqCsvPath = System.getenv("SUB_FEED_CSV");
         boolean reqLoop = "1".equals(System.getenv("SUB_FEED_LOOP"));
         if (reqCsvPath != null && !reqCsvPath.isBlank()) {
@@ -74,7 +74,9 @@ public class VehicleMain {
                 System.err.println("[SUB] CSV not found: " + reqCsv.getAbsolutePath());
             } else {
                 Thread reqFeeder = new Thread(() -> {
-                    SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv);
+                    java.net.InetSocketAddress defaultRx = new java.net.InetSocketAddress("127.0.0.1", cfg.udpRecvPort);
+                    SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv, defaultRx);
+                    //SubscribeFeeder sfeeder = new SubscribeFeeder(reqCsv);
                     do {
                         sfeeder.run(client);
                         if (!reqLoop) {
@@ -94,7 +96,7 @@ public class VehicleMain {
             System.out.println("[SUB] SUB_FEED_CSV not set -> no /request will be sended.");
         }
 
-        // ====== 購読用CSV（SUB_FEED_CSV）: at_ms,region_id ======
+        // ====== 発行用CSV（SUB_FEED_CSV）: at_ms,region_id ======
         String subCsvPath = System.getenv("PUB_FEED_CSV");
         boolean subLoop = "1".equals(System.getenv("PUB_FEED_LOOP"));
         if (subCsvPath != null && !subCsvPath.isBlank()) {

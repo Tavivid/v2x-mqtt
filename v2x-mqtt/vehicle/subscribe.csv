@@ -1,4 +1,4 @@
 # at_ms,region_id,ip,port
-0,cell-10,127.0.0.1,51235
-5000,cell-12,127.0.0.1,51235
-10000,cell-14,127.0.0.1,51235
+0,cell-10,auto,auto
+5000,cell-12,auto,auto
+10000,cell-14,auto,auto

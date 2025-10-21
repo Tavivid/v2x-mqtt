@@ -94,14 +94,16 @@ public class AppConfig {
                      int regionTtlSeconds, String vehicleId, double publishRateHz, int maxPointsPerChunk,
                      String datasetPath, boolean datasetLoop, String datasetGlob,
                      String transferSendDir, String transferSendTemplate, String transferRecvDir) {
+        this.vehicleId = vehicleId;
+        int span = 2000; // ポートのずらし幅。必要なら環境変数等で可変に
+        int offset = derivePortFromVehicleId(this.vehicleId, span);
         this.mqttHost = mqttHost;
         this.mqttPort = mqttPort;
         this.mqttClientPrefix = mqttClientPrefix;
-        this.udpSendPort = udpSendPort;
-        this.udpRecvPort = udpRecvPort;
+        this.udpSendPort = udpSendPort + offset;
+        this.udpRecvPort = udpRecvPort + offset;
         this.geohashPrecision = geohashPrecision;
         this.regionTtlSeconds = regionTtlSeconds;
-        this.vehicleId = vehicleId;
         this.publishRateHz = publishRateHz;
         this.maxPointsPerChunk = maxPointsPerChunk;
         this.datasetPath = datasetPath;
@@ -150,5 +152,12 @@ public class AppConfig {
             case "0": case "false": case "no":  case "n": return false;
             default: return fallback;
         }
+    }
+
+    public static int derivePortFromVehicleId(String vehicleId, int span) {
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(vehicleId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        long v = crc.getValue(); // 0..2^32-1
+        return (int)(v % span);
     }
 }

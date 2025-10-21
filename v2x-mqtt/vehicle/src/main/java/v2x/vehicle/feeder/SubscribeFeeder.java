@@ -30,10 +30,17 @@ import java.util.stream.Collectors;
  */
 public class SubscribeFeeder {
   private final File csv;
+  private final java.net.InetSocketAddress defaultRx;
 
   public SubscribeFeeder(File csv) {
     this.csv = csv;
+    this.defaultRx = null;
   }
+
+  public SubscribeFeeder(File csv, java.net.InetSocketAddress defaultRx) {
+    this.csv = csv;
+    this.defaultRx = defaultRx;
+}
 
   static final class Row {
     final long atMs;
@@ -57,8 +64,21 @@ public class SubscribeFeeder {
         if (tk.length < 4) throw new IllegalArgumentException("SUB CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
         long at = Long.parseLong(tk[0].trim());
         String region = tk[1].trim();
-        String ip = tk[2].trim();
-        int port = Integer.parseInt(tk[3].trim());
+        String ipRaw = tk[2].trim();
+        String portRaw = tk[3].trim();
+
+        String ip = ipRaw;
+        Integer port;
+
+        if (ipRaw.isEmpty() || ipRaw.equalsIgnoreCase("auto") || ipRaw.equals("-")) {
+          ip = (defaultRx != null) ? defaultRx.getAddress().getHostAddress() : "127.0.0.1";
+        }
+        if (portRaw.isEmpty() || portRaw.equalsIgnoreCase("auto") || portRaw.equals("-")) {
+          if (defaultRx == null) throw new IllegalArgumentException("port empty and no defaultRx");
+            port = defaultRx.getPort();
+          } else {
+            port = Integer.parseInt(portRaw);
+          }
         rows.add(new Row(at, region, new InetSocketAddress(ip, port)));
       }
     }
