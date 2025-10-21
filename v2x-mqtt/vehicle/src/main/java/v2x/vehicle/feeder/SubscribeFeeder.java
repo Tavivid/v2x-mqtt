@@ -46,8 +46,9 @@ public class SubscribeFeeder {
     final long atMs;
     final String region;
     final InetSocketAddress rx;
-    Row(long atMs, String region, InetSocketAddress rx) {
-      this.atMs = atMs; this.region = region; this.rx = rx;
+    final int priority;
+    Row(long atMs, String region, InetSocketAddress rx, int priority) {
+      this.atMs = atMs; this.region = region; this.rx = rx; this.priority = priority;
     }
   }
 
@@ -64,8 +65,9 @@ public class SubscribeFeeder {
         if (tk.length < 4) throw new IllegalArgumentException("SUB CSV format error at line " + lineno + " (expect: at_ms,region_id,ip,port)");
         long at = Long.parseLong(tk[0].trim());
         String region = tk[1].trim();
-        String ipRaw = tk[2].trim();
-        String portRaw = tk[3].trim();
+        int priority = Integer.parseInt(tk[2].trim());
+        String ipRaw = tk[3].trim();
+        String portRaw = tk[4].trim();
 
         String ip = ipRaw;
         Integer port;
@@ -79,7 +81,7 @@ public class SubscribeFeeder {
           } else {
             port = Integer.parseInt(portRaw);
           }
-        rows.add(new Row(at, region, new InetSocketAddress(ip, port)));
+        rows.add(new Row(at, region, new InetSocketAddress(ip, port), priority));
       }
     }
     return rows.stream().sorted(Comparator.comparingLong(r -> r.atMs)).collect(Collectors.toList());
@@ -95,27 +97,14 @@ public class SubscribeFeeder {
       long start = System.currentTimeMillis();
       ObjectMapper mapper = new ObjectMapper();
 
+      RequestPublisher publisher = new RequestPublisher(client);
+
       for (Row r : rows) {
         long due = start + r.atMs;
         long now = System.currentTimeMillis();
         if (due > now) TimeUnit.MILLISECONDS.sleep(due - now);
 
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("type", "need-pointcloud");
-        body.put("region_id", r.region);
-        body.put("rx_udp", Map.of("ip", r.rx.getAddress().getHostAddress(), "port", r.rx.getPort()));
-        body.put("ts_ms", System.currentTimeMillis());
-        body.put("nonce", UUID.randomUUID().toString());
-
-        byte[] payload = mapper.writeValueAsBytes(body);
-        MqttMessage msg = new MqttMessage(payload);
-        msg.setQos(1);          // 取りこぼし低減のため QoS=1
-        msg.setRetained(false);
-
-        String topic = "v2x/region/" + r.region + "/request";
-        client.publish(topic, msg);
-        System.out.printf("[SUB] subscribed topic=%s payload=%s%n",
-            topic, new String(payload, StandardCharsets.UTF_8));
+        publisher.publish(r.region, r.rx, r.priority);
       }
       System.out.println("[SUB] csv sequence done");
     } catch (Exception e) {
