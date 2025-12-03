@@ -4,11 +4,17 @@ import org.example.v2x.common.config.AppConfig;
 
 public class CoordinatorMain {
 
-    public static void main(String[] args) throws Exception {
-        AppConfig cfg = AppConfig.load();
-        RegionDirectory dir = new RegionDirectory(cfg.regionTtlSeconds * 1000L);
-        new SubscriptionManager(cfg, dir); // subscribes and runs via MQTT callback thread
-        new Thread(new UdpRelayServer(cfg.udpRecvPort), "UdpRelay").start();
-        System.out.println("Coordinator started.");
+    public static void main(String[] args) {
+        int port = 11311; // デフォルト master ポート
+        if (args.length >= 1) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (NumberFormatException ignore) {
+                System.err.println("[Master] invalid port '" + args[0] + "', use default " + port);
+            }
+        }
+
+        MasterServer master = new MasterServer(port);
+        master.run(); // ブロッキングで実行
     }
 }

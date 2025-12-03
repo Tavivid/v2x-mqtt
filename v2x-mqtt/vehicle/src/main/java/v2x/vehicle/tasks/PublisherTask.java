@@ -1,216 +1,111 @@
 package v2x.vehicle.tasks;
 
-import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
 import v2x.vehicle.config.AppConfig;
+import v2x.vehicle.datasource.PointCloudSource;
 import v2x.vehicle.model.PointCloudChunk;
 import v2x.vehicle.net.DedupCache;
-import v2x.vehicle.net.Topics;
-import v2x.vehicle.util.Jsons;
-import v2x.vehicle.datasource.PointCloudSource;
+import v2x.vehicle.net.MasterClient;
+import v2x.vehicle.net.RosPublisher;
+import v2x.vehicle.util.PointCloudSerializer;
 
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
 import java.time.Duration;
-import java.util.Comparator;
-import java.util.concurrent.*;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.concurrent.TimeUnit;
 
+/**
+ * 点群 Publisher（ROS1 風）。
+ *
+ * - PointCloudSource から PointCloudChunk を取り出し
+ * - PointCloudSerializer でシリアライズして
+ * - RosPublisher を通じて Subscriber へ送信する
+ */
 public class PublisherTask implements Runnable {
 
-    private static final Pattern TOPIC_REGION = Pattern.compile("^v2x/region/([^/]+)/data$");
-
-    private final MqttClient mqtt;
+    private final AppConfig cfg;
     private final String vehicleId;
     private final String regionId;
     private final double publishRateHz;
     private final int maxPointsPerChunk;
     private final PointCloudSource source;
+
+    private final MasterClient master;
+    private final RosPublisher rosPublisher;
+
     private final DedupCache dpd = new DedupCache(2048, Duration.ofSeconds(10));
 
-    private final Path sendDir;
-    private final String sendTemplate;
-
-    private static final class Job {
-        final String region;
-        final String ip;
-        final int port;
-        final int priority;
-        final long enqTs;
-        Job(String region, String ip, int port, int priority, long enqTs) {
-            this.region = region; this.ip = ip; this.port = port;
-            this.priority = priority; this.enqTs = enqTs;
-        }
-    }
-    private final PriorityBlockingQueue<Job> outQ =
-        new PriorityBlockingQueue<>(1024,
-            Comparator.<Job>comparingInt(j -> j.priority).reversed()
-                      .thenComparingLong(j -> j.enqTs));
-
-    public PublisherTask(MqttClient mqtt, String vehicleId, String regionId,
-            double publishRateHz, int maxPointsPerChunk, PointCloudSource source, AppConfig cfg) {
-        this.mqtt = mqtt;
-        this.vehicleId = vehicleId;
+    public PublisherTask(AppConfig cfg,
+                         PointCloudSource source,
+                         String regionId,
+                         MasterClient master,
+                         String advertiseHost,
+                         int advertisePort) {
+        this.cfg = cfg;
+        this.vehicleId = cfg.vehicleId;
         this.regionId = regionId;
-        this.publishRateHz = publishRateHz;
-        this.maxPointsPerChunk = maxPointsPerChunk;
+        this.publishRateHz = cfg.publishRateHz;
+        this.maxPointsPerChunk = cfg.maxPointsPerChunk;
         this.source = source;
+        this.master = master;
 
-        this.sendDir = Paths.get(cfg.transferSendDir).toAbsolutePath().normalize();
-        this.sendTemplate = (cfg.transferSendTemplate == null || cfg.transferSendTemplate.isBlank())
-                ? "*{region}*"
-                : cfg.transferSendTemplate;
-        System.out.println("[PUB] SEND_DIR=" + sendDir + " TEMPLATE=" + sendTemplate);
-
-    }
-
-    public IMqttMessageListener asListener() {
-        return this::onFetchMessage;
-    }
-
-    // ====== fetch-request 受信ハンドラ ======
-    private void onFetchMessage(String topic, MqttMessage message) {
-        String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
-
-        // ポイントチャンクなどデータ本体はスキップ
-        if (payload.contains("\"points\"")) return;
-
-        String dedupKey = topic + "|" + Integer.toHexString(payload.hashCode());
-        if (dpd.seen(dedupKey, System.currentTimeMillis())) return;
-
-        try {
-            if (!payload.contains("fetch-request")) return;
-
-            // regionId を JSON か topic から取得
-            String region = extractRegionId(payload, topic);
-            System.out.println("[PUB] received fetch-request for region=" + region);
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> obj = Jsons.GSON.fromJson(payload, Map.class);
-            Object rx = (obj != null) ? obj.get("rx_udp") : null;
-            if (!(rx instanceof Map)) {
-                System.out.println("[PUB] fetch-request has no rx_udp -> skip");
-                return;
-            }
-            String ip = String.valueOf(((Map<?, ?>) rx).get("ip"));
-            int port = ((Number) ((Map<?, ?>) rx).get("port")).intValue();
-            
-            int priority = 0;
-            try {
-                Object pr = (obj != null) ? obj.get("priority") : null;
-                if (pr instanceof Number) priority = ((Number) pr).intValue();
-            } catch (Exception ignore) {}
-            outQ.offer(new Job(region, ip, port, priority, System.currentTimeMillis()));
-            // ログ（必要最小限）
-            System.out.println("[PUB] enqueued fetch job region=" + region
-                    + " pri=" + priority + " dst=" + ip + ":" + port);
-            // ファイル選択→UDP 送信
-            //handleFetch(region, ip, port);
-        } catch (Exception e) {
-            System.err.println("[PUB] fetch-parse error: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    private static String extractRegionId(String payload, String topic) {
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> m = Jsons.GSON.fromJson(payload, Map.class);
-            Object rid = (m != null) ? m.get("regionId") : null;
-            if (rid != null) return String.valueOf(rid);
-        } catch (Exception ignore) {}
-        Matcher mm = TOPIC_REGION.matcher(topic);
-        if (mm.matches()) return mm.group(1);
-        return "unknown";
-    }
-
-    // ====== ファイル選択→UDP 送信 ======
-    private void handleFetch(String region, String ip, int port) {
-        try {
-            if (!Files.isDirectory(sendDir)) {
-                System.out.println("[PUB] SEND_DIR not a directory: " + sendDir);
-                return;
-            }
-            Path file = pickLatestForRegion(sendDir, sendTemplate, region);
-            if (file == null) {
-                System.out.println("[PUB] no file matched for region=" + region + " in " + sendDir);
-                return;
-            }
-            byte[] data = Files.readAllBytes(file);
-            udpSend(data, ip, port);
-
-            // ★ ファイル名は Publisher 側で出力（要求に合わせた責務）
-            System.out.println("[PUB] sent file=" + file.getFileName()
-                    + " (" + data.length + " bytes) to " + ip + ":" + port
-                    + " for region=" + region);
-        } catch (Exception e) {
-            System.err.println("[PUB] fetch-send error: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    private static Path pickLatestForRegion(Path dir, String template, String region) throws java.io.IOException {
-        String pattern = (template == null || template.isBlank()) ? "*{region}*" : template;
-        pattern = pattern.replace("{region}", region);
-        PathMatcher matcher = dir.getFileSystem().getPathMatcher("glob:" + pattern);
-        try (var stream = Files.list(dir)) {
-            return stream
-                    .filter(p -> Files.isRegularFile(p) && matcher.matches(p.getFileName()))
-                    .max(Comparator.comparingLong(p -> {
-                        try { return Files.getLastModifiedTime(p).toMillis(); }
-                        catch (Exception e) { return Long.MIN_VALUE; }
-                    }))
-                    .orElse(null);
-        }
-    }
-
-    private static void udpSend(byte[] data, String ip, int port) throws Exception {
-        try (DatagramSocket sock = new DatagramSocket()) {
-            DatagramPacket pkt = new DatagramPacket(data, data.length, new InetSocketAddress(ip, port));
-            sock.send(pkt);
-        }
+        String topic = "v2x/region/" + regionId + "/data";
+        this.rosPublisher = new RosPublisher(master, topic, advertiseHost, advertisePort);
     }
 
     @Override
     public void run() {
+        try {
+            rosPublisher.start();
+        } catch (Exception e) {
+            System.err.println("[PUB] failed to start RosPublisher: " + e.getMessage());
+            e.printStackTrace();
+            return;
+        }
+
         long intervalMs = (publishRateHz > 0) ? (long) (1000.0 / publishRateHz) : 500L;
-        
-        while (true) {
+        System.out.println("[PUB] started for region=" + regionId
+                + " vehicleId=" + vehicleId
+                + " rate=" + publishRateHz + "Hz");
+
+        while (!Thread.currentThread().isInterrupted()) {
             try {
-                // availability アナウンス
-                var avail = Jsons.GSON.toJson(java.util.Map.of("vehicleId", vehicleId));
-                mqtt.publish(Topics.availability(regionId), new MqttMessage(avail.getBytes(StandardCharsets.UTF_8)));
-
-                Job j;
-                while ((j = outQ.poll()) != null) {
-                    handleFetch(j.region, j.ip, j.port);
-                }
-                
-                // データセットが与えられている場合のみ点群 publish（不要なら source を null に）
-                if (source != null && publishRateHz > 0) {
-                    PointCloudChunk chunk = source.nextChunk(regionId, vehicleId, maxPointsPerChunk);
-                    if (chunk != null) {
-                        String key = chunk.makeDedupKey();
-                        if (!dpd.seen(key, System.currentTimeMillis())) {
-                            String json = Jsons.GSON.toJson(chunk);
-                            mqtt.publish(Topics.data(regionId), new MqttMessage(json.getBytes(StandardCharsets.UTF_8)));
-                        }
-                    } else {
-                        // データが枯渇したときは少し待つ
-                        TimeUnit.MILLISECONDS.sleep(500);
-                    }
+                if (source == null || publishRateHz <= 0) {
+                    TimeUnit.MILLISECONDS.sleep(1000);
+                    continue;
                 }
 
+                PointCloudChunk chunk = source.nextChunk(vehicleId, regionId, maxPointsPerChunk);
+                if (chunk == null) {
+                    // データ枯渇
+                    TimeUnit.MILLISECONDS.sleep(500);
+                    continue;
+                }
+
+                String key = chunk.makeDedupKey();
+                if (dpd.seen(key, System.currentTimeMillis())) {
+                    continue; // 重複チャンクはスキップ
+                }
+
+                byte[] payload = PointCloudSerializer.serialize(vehicleId, regionId, chunk);
+                rosPublisher.publish(payload);
                 TimeUnit.MILLISECONDS.sleep(intervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
+                System.err.println("[PUB] error: " + e.getMessage());
                 e.printStackTrace();
+                try {
+                    TimeUnit.MILLISECONDS.sleep(1000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
         }
+
+        try {
+            rosPublisher.close();
+        } catch (Exception ignore) {
+        }
+        System.out.println("[PUB] stopped.");
     }
 }
