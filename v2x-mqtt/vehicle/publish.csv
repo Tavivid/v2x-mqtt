@@ -1,6 +1,6 @@
 # at_ms,region_id,ip,port
-0,cell-10,auto,auto
-800,cell-12,auto,auto
-1600,cell-14,auto,auto
-2400,cell-16,auto,auto
-3200,cell-18,auto,auto
+0,cell-0a3c,auto,auto
+800,cell-0a3d,auto,auto
+1600,cell-0a3e,auto,auto
+2400,cell-0a3f,auto,auto
+3200,cell-0b3f,auto,auto

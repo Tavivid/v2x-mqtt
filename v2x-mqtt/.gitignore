@@ -29,3 +29,6 @@ mosquitto/log/
 **/out/
 mosquitto/data/
 .vscode-server/
+
+# === Dataset ===
+*.pcd
