@@ -115,14 +115,9 @@ public class VehicleMain {
         }
         boolean timelineLoop = "1".equals(System.getenv("REGION_TIMELINE_LOOP"));
 
-        // ★ タイムラインディレクトリの決定:
-        //   1) REGION_TIMELINE_DIR があればそれを優先
-        //   2) なければ cfg.datasetPath を使う
         File tdir = null;
         if (regionTimelineDirPath != null && !regionTimelineDirPath.isBlank()) {
             tdir = new File(regionTimelineDirPath);
-        } else if (cfg.datasetPath != null && !cfg.datasetPath.isBlank()) {
-            tdir = new File(cfg.datasetPath);
         }
 
         if (tdir != null && tdir.isDirectory()) {
@@ -195,16 +190,16 @@ public class VehicleMain {
 
         if (subTimelineDirPath != null && !subTimelineDirPath.isBlank()) {
             // ★ JSON タイムラインモード
-            File tdir = new File(subTimelineDirPath);
-            if (!tdir.isDirectory()) {
-                System.err.println("[SUB] SUB_TIMELINE_DIR is not directory: " + tdir.getAbsolutePath());
+            File subTdir = new File(subTimelineDirPath);
+            if (!subTdir.isDirectory()) {
+                System.err.println("[SUB] SUB_TIMELINE_DIR is not directory: " + subTdir.getAbsolutePath());
             } else {
                 RegionTimelineSubscriberFeeder feeder =
-                        new RegionTimelineSubscriberFeeder(master, tdir, subTimelineStepMs, subTimelineLoop);
+                        new RegionTimelineSubscriberFeeder(master, subTdir, subTimelineStepMs, subTimelineLoop);
                 Thread feederThread = new Thread(feeder, "region-timeline-subscriber");
                 feederThread.setDaemon(true);
                 feederThread.start();
-                System.out.println("[SUB] region timeline started dir=" + tdir.getAbsolutePath()
+                System.out.println("[SUB] region timeline started dir=" + subTdir.getAbsolutePath()
                         + " stepMs=" + subTimelineStepMs + " loop=" + subTimelineLoop);
             }
 

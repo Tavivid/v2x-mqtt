@@ -77,15 +77,17 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 # データセットが無ければ Publisher は自動スキップ
 # VEHICLE_ID は AppConfig の YAML を環境変数で上書き可能（重複起動時は必ず変えるか ClientID をユニーク化）
 # 購読者両側
-VEHICLE_ID=vehA \
-SUB_FEED_CSV="subscribe.csv" \
-SUB_FEED_LOOP=1 \
+MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
+VEHICLE_ID=vehicle-a \
+REGION_TIMELINE_DIR="./dataset/k15-44-59" \
+REGION_TIMELINE_STEP_MS=100 \
 ./gradlew --no-daemon :vehicle:run
 
 # 発行者両側
-VEHICLE_ID=vehB \
-PUB_FEED_CSV="publish.csv" \
-PUB_FEED_LOOP=0 \
+MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
+VEHICLE_ID=vehicle-m \
+SUB_TIMELINE_DIR="./dataset/subscription/m" \
+SUB_TIMELINE_STEP_MS=100 \
 ./gradlew --no-daemon :vehicle:run
 
 ログ例

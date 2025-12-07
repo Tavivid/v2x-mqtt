@@ -4,7 +4,6 @@ import v2x.vehicle.config.AppConfig;
 import v2x.vehicle.datasource.DatasetPointCloudSource;
 import v2x.vehicle.datasource.PointCloudSource;
 import v2x.vehicle.model.PointCloudChunk;
-import v2x.vehicle.net.DedupCache;
 import v2x.vehicle.net.MasterClient;
 import v2x.vehicle.net.Topics;
 import v2x.vehicle.net.RosPublisher;
@@ -96,9 +95,6 @@ public class RegionTimelineFeeder implements Runnable {
         Map<String, RegionPublisherCtx> active = new HashMap<>();
         int portOffset = 0;
 
-        // DPD 用キャッシュ（元 PublisherTask と同じ程度の設定）
-        DedupCache dedup = new DedupCache(1000, Duration.ofSeconds(cfg.regionTtlSeconds));
-
         outerLoop:
         while (!Thread.currentThread().isInterrupted()) {
             for (int i = 0; i < frames.size(); i++) {
@@ -173,17 +169,22 @@ public class RegionTimelineFeeder implements Runnable {
                             continue;
                         }
 
-                        String key = chunk.makeDedupKey();
-                        long now = System.currentTimeMillis();
-                        if (dedup.seen(key, now)) {
-                            // すでに同バケットのデータを送っているのでスキップ
+                        int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
+
+                        if (pointCount <= 10) {
+                            /*
+                            System.out.println("[PUB] skip frame=" + frameIndex
+                                    + " region=" + regionId
+                                    + " vehicleId=" + vehicleId
+                                    + " points=" + pointCount + " (<=10)");
+                            */
                             continue;
                         }
 
                         byte[] payload = PointCloudSerializer.serialize(vehicleId, regionId, chunk);
                         ctx.publisher.publish(payload);
 
-                        int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
+                        //int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
                         System.out.println("[PUB] frame=" + frameIndex
                                 + " region=" + regionId
                                 + " vehicleId=" + vehicleId

@@ -1,140 +1,194 @@
 package v2x.coordinator;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
-/**
- * ROS1 の Master に似た役割をするシンプルなサーバ。
- *
- * プロトコル（1 リクエスト 1 コネクション）:
- *
- *   REGISTER_PUB <topic> <host> <port>
- *   UNREGISTER_PUB <topic> <host> <port>
- *   LOOKUP_PUBS <topic>
- *
- * レスポンス:
- *
- *   OK
- *   ENDPOINTS host1:port1,host2:port2,...
- */
 public class MasterServer implements Runnable {
 
-    public static final class Endpoint {
-        public final String host;
-        public final int port;
-
-        public Endpoint(String host, int port) {
-            this.host = host;
-            this.port = port;
-        }
-
-        @Override
-        public String toString() {
-            return host + ":" + port;
-        }
-    }
+    private static final String CMD_REGISTER_PUB   = "REGISTER_PUB";
+    private static final String CMD_UNREGISTER_PUB = "UNREGISTER_PUB";
+    private static final String CMD_LOOKUP_PUBS    = "LOOKUP_PUBS";
 
     private final int port;
-    // topic -> endpoints
-    private final Map<String, Set<Endpoint>> table = new ConcurrentHashMap<>();
+
+    // topic -> { (host,port) ... }
+    private final ConcurrentMap<String, Set<Endpoint>> topicPubs = new ConcurrentHashMap<>();
+
+    // ★固定サイズのワーカースレッドプール
+    private final ExecutorService workerPool;
 
     public MasterServer(int port) {
         this.port = port;
+        int workers = 16; // 必要ならここを増減してください
+        this.workerPool = Executors.newFixedThreadPool(
+                workers,
+                r -> {
+                    Thread t = new Thread(r, "MasterClientWorker");
+                    t.setDaemon(true);
+                    return t;
+                }
+        );
     }
 
     @Override
     public void run() {
-        try (ServerSocket ss = new ServerSocket(port)) {
-            System.out.println("[Master] started on port " + port);
+        try (ServerSocket server = new ServerSocket(port)) {
+            System.out.println("[Master] listen on " + server.getLocalPort());
+
             while (true) {
-                Socket sock = ss.accept();
-                new Thread(() -> handleClient(sock),
-                           "MasterClient-" + sock.getRemoteSocketAddress()).start();
+                Socket sock = server.accept();
+                try {
+                    // ★毎回 Thread を new せず、プールに投げる
+                    workerPool.submit(() -> handleClient(sock));
+                } catch (RejectedExecutionException ex) {
+                    System.err.println("[Master] worker pool full, handle client inline");
+                    handleClient(sock);
+                }
             }
         } catch (IOException e) {
-            System.err.println("[Master] fatal error: " + e.getMessage());
-            e.printStackTrace();
+            throw new RuntimeException("MasterServer failed", e);
+        } finally {
+            workerPool.shutdownNow();
         }
     }
 
     private void handleClient(Socket sock) {
         try (sock;
-             BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream()));
-             PrintWriter out = new PrintWriter(new OutputStreamWriter(sock.getOutputStream()), true)) {
+             BufferedReader in = new BufferedReader(
+                     new InputStreamReader(sock.getInputStream(), StandardCharsets.UTF_8));
+             PrintWriter out = new PrintWriter(
+                     new OutputStreamWriter(sock.getOutputStream(), StandardCharsets.UTF_8), true)) {
 
             String line = in.readLine();
             if (line == null) {
                 return;
             }
-            String resp = process(line.trim());
-            out.println(resp);
-        } catch (IOException e) {
-            // ログだけ出して終了
-            System.err.println("[Master] client error: " + e.getMessage());
-        }
-    }
 
-    private String process(String line) {
-        try {
-            String[] parts = line.split("\\s+");
-            if (parts.length < 2) {
-                return "ERR invalid-command";
-            }
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length == 0) return;
+
             String cmd = parts[0];
+
             switch (cmd) {
-                case "REGISTER_PUB":
-                    if (parts.length != 4) return "ERR usage: REGISTER_PUB <topic> <host> <port>";
-                    return registerPub(parts[1], parts[2], Integer.parseInt(parts[3]));
-                case "UNREGISTER_PUB":
-                    if (parts.length != 4) return "ERR usage: UNREGISTER_PUB <topic> <host> <port>";
-                    return unregisterPub(parts[1], parts[2], Integer.parseInt(parts[3]));
-                case "LOOKUP_PUBS":
-                    if (parts.length != 2) return "ERR usage: LOOKUP_PUBS <topic>";
-                    return lookupPubs(parts[1]);
+                case CMD_REGISTER_PUB:
+                    handleRegisterPub(parts, out);
+                    break;
+                case CMD_UNREGISTER_PUB:
+                    handleUnregisterPub(parts, out);
+                    break;
+                case CMD_LOOKUP_PUBS:
+                    handleLookupPubs(parts, out);
+                    break;
                 default:
-                    return "ERR unknown-command";
+                    out.println("ERROR unknown command");
+                    break;
             }
+
         } catch (Exception e) {
-            return "ERR " + e.getClass().getSimpleName() + ":" + e.getMessage();
+            System.err.println("[Master] client handler error: " + e);
         }
     }
 
-    private String registerPub(String topic, String host, int port) {
+    private void handleRegisterPub(String[] parts, PrintWriter out) {
+        // REGISTER_PUB <topic> <host> <port>
+        if (parts.length != 4) {
+            out.println("ERROR invalid REGISTER_PUB");
+            return;
+        }
+        String topic = parts[1];
+        String host  = parts[2];
+        int    port  = Integer.parseInt(parts[3]);
         Endpoint ep = new Endpoint(host, port);
-        table.compute(topic, (t, set) -> {
-            if (set == null) set = ConcurrentHashMap.newKeySet();
+
+        topicPubs.compute(topic, (t, set) -> {
+            if (set == null) {
+                set = ConcurrentHashMap.newKeySet();
+            }
             set.add(ep);
             return set;
         });
-        System.out.println("[Master] REGISTER_PUB topic=" + topic + " ep=" + ep);
-        return "OK";
+
+        out.println("OK");
     }
 
-    private String unregisterPub(String topic, String host, int port) {
+    private void handleUnregisterPub(String[] parts, PrintWriter out) {
+        // UNREGISTER_PUB <topic> <host> <port>
+        if (parts.length != 4) {
+            out.println("ERROR invalid UNREGISTER_PUB");
+            return;
+        }
+        String topic = parts[1];
+        String host  = parts[2];
+        int    port  = Integer.parseInt(parts[3]);
         Endpoint ep = new Endpoint(host, port);
-        table.computeIfPresent(topic, (t, set) -> {
+
+        topicPubs.computeIfPresent(topic, (t, set) -> {
             set.remove(ep);
             return set.isEmpty() ? null : set;
         });
-        System.out.println("[Master] UNREGISTER_PUB topic=" + topic + " ep=" + ep);
-        return "OK";
+
+        out.println("OK");
     }
 
-    private String lookupPubs(String topic) {
-        Set<Endpoint> set = table.getOrDefault(topic, Collections.emptySet());
-        if (set.isEmpty()) {
-            return "ENDPOINTS";
+    private void handleLookupPubs(String[] parts, PrintWriter out) {
+        // LOOKUP_PUBS <topic>
+        if (parts.length != 2) {
+            out.println("ERROR invalid LOOKUP_PUBS");
+            return;
         }
-        StringBuilder sb = new StringBuilder("ENDPOINTS ");
-        boolean first = true;
+        String topic = parts[1];
+
+        Set<Endpoint> set = topicPubs.get(topic);
+        if (set == null || set.isEmpty()) {
+            out.println("ENDPOINTS");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("ENDPOINTS");
         for (Endpoint ep : set) {
-            if (!first) sb.append(",");
-            sb.append(ep.host).append(":").append(ep.port);
-            first = false;
+            sb.append(' ')
+              .append(ep.host)
+              .append(':')
+              .append(ep.port);
         }
-        return sb.toString();
+        out.println(sb.toString());
+    }
+
+    private static final class Endpoint {
+        final String host;
+        final int port;
+
+        Endpoint(String host, int port) {
+            this.host = host;
+            this.port = port;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Endpoint)) return false;
+            Endpoint endpoint = (Endpoint) o;
+            return port == endpoint.port &&
+                   Objects.equals(host, endpoint.host);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(host, port);
+        }
     }
 }

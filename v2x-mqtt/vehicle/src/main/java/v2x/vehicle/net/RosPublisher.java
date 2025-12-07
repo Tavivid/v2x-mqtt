@@ -21,20 +21,19 @@ public class RosPublisher implements AutoCloseable {
     private final int listenPort;
 
     private final CopyOnWriteArrayList<DataOutputStream> clients = new CopyOnWriteArrayList<>();
+
     private volatile boolean running = false;
     private Thread acceptThread;
+    private volatile ServerSocket serverSocket; // ★ 追加: listen ソケットを保持
 
-    public RosPublisher(MasterClient master,
-                        String topic,
-                        String advertiseHost,
-                        int listenPort) {
+    public RosPublisher(MasterClient master, String topic, String advertiseHost, int listenPort) {
         this.master = master;
         this.topic = topic;
         this.advertiseHost = advertiseHost;
         this.listenPort = listenPort;
     }
 
-    public void start() throws IOException {
+    public synchronized void start() throws IOException {
         if (running) return;
         running = true;
 
@@ -42,20 +41,43 @@ public class RosPublisher implements AutoCloseable {
         master.registerPublisher(topic, advertiseHost, listenPort);
 
         acceptThread = new Thread(() -> {
-            try (ServerSocket ss = new ServerSocket(listenPort)) {
+            try {
+                ServerSocket ss = new ServerSocket(listenPort);
+                serverSocket = ss;
                 System.out.println("[RosPublisher] listen on " + listenPort + " topic=" + topic);
                 while (running) {
-                    Socket sock = ss.accept();
-                    System.out.println("[RosPublisher] subscriber connected from " + sock.getRemoteSocketAddress());
-                    clients.add(new DataOutputStream(sock.getOutputStream()));
+                    try {
+                        Socket sock = ss.accept();
+                        System.out.println("[RosPublisher] subscriber connected from " + sock.getRemoteSocketAddress());
+                        clients.add(new DataOutputStream(sock.getOutputStream()));
+                    } catch (IOException e) {
+                        // close() で serverSocket を閉じたときもここに来る
+                        if (running) {
+                            System.err.println("[RosPublisher] accept error: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                        // running が false なら閉じるための例外なのでループを抜ける
+                        break;
+                    }
                 }
             } catch (IOException e) {
                 if (running) {
-                    System.err.println("[RosPublisher] accept error: " + e.getMessage());
+                    System.err.println("[RosPublisher] listen failed on port " + listenPort + " : " + e.getMessage());
                     e.printStackTrace();
+                }
+            } finally {
+                // 終了時にソケットを必ず閉じる
+                ServerSocket ss = serverSocket;
+                serverSocket = null;
+                if (ss != null && !ss.isClosed()) {
+                    try {
+                        ss.close();
+                    } catch (IOException ignore) {
+                    }
                 }
             }
         }, "RosPublisher-accept-" + topic);
+
         acceptThread.setDaemon(true);
         acceptThread.start();
     }
@@ -63,7 +85,6 @@ public class RosPublisher implements AutoCloseable {
     public void publish(byte[] payload) {
         if (!running) return;
         int len = payload.length;
-        long now = System.currentTimeMillis();
 
         for (Iterator<DataOutputStream> it = clients.iterator(); it.hasNext(); ) {
             DataOutputStream out = it.next();
@@ -85,9 +106,21 @@ public class RosPublisher implements AutoCloseable {
     @Override
     public void close() {
         running = false;
+
+        // ★ 追加: accept を強制的に解除するため、listen ソケットを閉じる
+        ServerSocket ss = serverSocket;
+        serverSocket = null;
+        if (ss != null) {
+            try {
+                ss.close(); // これで accept() が IOException を投げてスレッドが抜ける
+            } catch (IOException ignore) {
+            }
+        }
+
         if (acceptThread != null) {
             acceptThread.interrupt();
         }
+
         for (DataOutputStream out : clients) {
             try {
                 out.close();
@@ -95,6 +128,7 @@ public class RosPublisher implements AutoCloseable {
             }
         }
         clients.clear();
+
         try {
             master.unregisterPublisher(topic, advertiseHost, listenPort);
         } catch (IOException e) {

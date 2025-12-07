@@ -3,7 +3,6 @@ package v2x.vehicle.tasks;
 import v2x.vehicle.config.AppConfig;
 import v2x.vehicle.datasource.PointCloudSource;
 import v2x.vehicle.model.PointCloudChunk;
-import v2x.vehicle.net.DedupCache;
 import v2x.vehicle.net.MasterClient;
 import v2x.vehicle.net.RosPublisher;
 import v2x.vehicle.util.PointCloudSerializer;
@@ -29,8 +28,6 @@ public class PublisherTask implements Runnable {
 
     private final MasterClient master;
     private final RosPublisher rosPublisher;
-
-    private final DedupCache dpd = new DedupCache(2048, Duration.ofSeconds(10));
 
     public PublisherTask(AppConfig cfg,
                          PointCloudSource source,
@@ -77,11 +74,6 @@ public class PublisherTask implements Runnable {
                     // データ枯渇
                     TimeUnit.MILLISECONDS.sleep(500);
                     continue;
-                }
-
-                String key = chunk.makeDedupKey();
-                if (dpd.seen(key, System.currentTimeMillis())) {
-                    continue; // 重複チャンクはスキップ
                 }
 
                 byte[] payload = PointCloudSerializer.serialize(vehicleId, regionId, chunk);
