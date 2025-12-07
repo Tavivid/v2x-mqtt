@@ -1,6 +1,4 @@
-package org.example.v2x.coordinator;
-
-import org.example.v2x.common.config.AppConfig;
+package v2x.coordinator;
 
 public class CoordinatorMain {
 

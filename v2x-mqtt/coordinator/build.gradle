@@ -3,7 +3,7 @@ plugins {
 }
 
 application {
-    mainClass = 'org.example.v2x.coordinator.CoordinatorMain'
+    mainClass = 'v2x.coordinator.CoordinatorMain'
 }
 
 dependencies {

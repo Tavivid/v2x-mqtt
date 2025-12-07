@@ -1,4 +1,4 @@
-package org.example.v2x.coordinator;
+package v2x.coordinator;
 
 import java.io.*;
 import java.net.ServerSocket;

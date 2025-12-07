@@ -1,5 +1,0 @@
-dependencies {
-    // MQTT client
-    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
-    implementation 'org.yaml:snakeyaml:2.2'
-}
