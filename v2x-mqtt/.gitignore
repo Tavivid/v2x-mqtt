@@ -31,4 +31,5 @@ mosquitto/data/
 .vscode-server/
 
 # === Dataset ===
+dataset/
 *.pcd
