@@ -30,10 +30,10 @@ import java.util.stream.Collectors;
  *   { "regions": ["cell-0a3c", "cell-0a3d"] }
  *
  * 特徴:
- *  - publisher の有無に関わらず、stepMs 間隔で JSON を読み進める
- *  - 各 region について「初めてタイムライン上に現れたとき」にだけ
- *    SubscriberTask スレッドを 1 本起動する（以降はそのまま受信し続ける）
- *  - タイムライン側のスレッドは subscribe の成否でブロックしない
+ * - publisher の有無に関わらず、stepMs 間隔で JSON を読み進める
+ * - 各 frame ごとに「欲しい領域集合 currentRegions」を評価し、
+ *   active な Subscriber と diff を取って start/stop する
+ * - タイムライン側のスレッドは subscribe の成否でブロックしない
  */
 public class RegionTimelineSubscriberFeeder implements Runnable {
 
@@ -42,10 +42,7 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
     private final long stepMs;
     private final boolean loop;
 
-    public RegionTimelineSubscriberFeeder(MasterClient master,
-                                          File timelineDir,
-                                          long stepMs,
-                                          boolean loop) {
+    public RegionTimelineSubscriberFeeder(MasterClient master, File timelineDir, long stepMs, boolean loop) {
         this.master = master;
         this.timelineDir = timelineDir;
         this.stepMs = stepMs;
@@ -64,8 +61,8 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
             return;
         }
 
-        // すでに Subscriber を起動した領域
-        final Set<String> startedRegions = new HashSet<>();
+        // region ごとの Subscriber 状態
+        Map<String, SubscriberCtx> active = new HashMap<>();
 
         outerLoop:
         while (!Thread.currentThread().isInterrupted()) {
@@ -76,31 +73,43 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
                 try {
                     regionList = readRegionsFromJson(framePath);
                 } catch (IOException e) {
-                    System.err.println("[SUB-TL] failed to read timeline json: "
-                            + framePath + " : " + e);
+                    System.err.println("[SUB-TL] failed to read timeline json: " + framePath + " : " + e);
                     regionList = List.of();
                 }
 
-                // このフレームで欲しい領域について、
-                // 「まだ Subscriber を起動していない領域」だけ新規に起動する
-                for (String regionId : regionList) {
-                    if (startedRegions.contains(regionId)) {
-                        continue;
-                    }
-                    startedRegions.add(regionId);
+                // このフレームで欲しい領域集合
+                LinkedHashSet<String> currentRegions = new LinkedHashSet<>(regionList);
 
-                    // ★ SubscriberTask を別スレッドで起動するだけ
-                    //    → publisher がまだいなくてもここではブロックしない
+                // ---- 終了すべき Subscriber = active - current ----
+                Set<String> toStop = new HashSet<>(active.keySet());
+                toStop.removeAll(currentRegions);
+
+                for (String regionId : toStop) {
+                    SubscriberCtx ctx = active.remove(regionId);
+                    if (ctx != null) {
+                        System.out.println("[SUB-TL] stop subscriber for region=" + regionId
+                                + " at frameIndex=" + i);
+                        // スレッドに終了を依頼
+                        ctx.thread.interrupt();
+                    }
+                }
+
+                // ---- 新規に開始すべき Subscriber = current - active ----
+                Set<String> toStart = new HashSet<>(currentRegions);
+                toStart.removeAll(active.keySet());
+
+                for (String regionId : toStart) {
                     SubscriberTask task = new SubscriberTask(master, regionId);
                     Thread t = new Thread(task, "Subscriber-" + regionId);
                     t.setDaemon(true);
                     t.start();
+                    active.put(regionId, new SubscriberCtx(regionId, t));
 
-                    System.out.println("[SUB-TL] started subscriber for region="
-                            + regionId + " at frameIndex=" + i);
+                    System.out.println("[SUB-TL] started subscriber for region=" + regionId
+                            + " at frameIndex=" + i);
                 }
 
-                // フレーム間の待ち時間
+                // ---- フレーム間の待ち時間 ----
                 try {
                     Thread.sleep(stepMs);
                 } catch (InterruptedException e) {
@@ -114,11 +123,25 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
             }
         }
 
+        // 終了時に Subscriber を全部止める
+        for (SubscriberCtx ctx : active.values()) {
+            ctx.thread.interrupt();
+        }
+
         System.out.println("[SUB-TL] finished.");
     }
 
-    // ====== ユーティリティ（RegionTimelineFeeder と同様） ======
+    private static class SubscriberCtx {
+        final String regionId;
+        final Thread thread;
 
+        SubscriberCtx(String regionId, Thread thread) {
+            this.regionId = regionId;
+            this.thread = thread;
+        }
+    }
+
+    // ====== ユーティリティ（RegionTimelineFeeder と同様） ======
     private static List<Path> listTimelineFiles(Path dir) {
         File[] files = dir.toFile().listFiles((d, name) -> name.endsWith(".json"));
         if (files == null) {

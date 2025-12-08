@@ -96,7 +96,10 @@ public class DatasetPointCloudSource implements PointCloudSource {
         st.pointCursor += n;
 
         long ts = Instant.now().toEpochMilli();
-        return new PointCloudChunk(regionId, vehicleId, ts, sub);
+
+        String srcFileName = st.files.get(st.fileIdx).getFileName().toString();
+        
+        return new PointCloudChunk(regionId, vehicleId, ts, sub, srcFileName);
     }
 
     /**

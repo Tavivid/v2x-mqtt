@@ -2,14 +2,26 @@ package v2x.vehicle.model;
 
 import java.util.List;
 
-
 /**
-* シンプルな点群チャンク。実運用では圧縮/バイナリ転送を推奨。
-*/
-public record PointCloudChunk(String regionId, String sourceVehicleId, long captureTsMillis, List<Point3D> points) {
-
+ * 単一リージョンの点群チャンク + 転送メタデータ。
+ *
+ * - regionId         : 領域ID (例: "cell-0a3c")
+ * - sourceVehicleId  : 送信元 Vehicle ID (例: "vehicle-a")
+ * - captureTsMillis  : 取得時刻 (sender 側で付ける)
+ * - points           : 点群本体
+ * - sourceFileName   : データセット元ファイル名 (例: "000123.pcd")
+ */
+public record PointCloudChunk(
+        String regionId,
+        String sourceVehicleId,
+        long captureTsMillis,
+        List<Point3D> points,
+        String sourceFileName
+) {
+    /**
+     * （必要なら）重複排除用キー。
+     */
     public String makeDedupKey() {
-// 領域ID + ソース車両 + 秒単位バケットでDPD（重複排除）を簡易に実現
         long bucket = captureTsMillis / 1000L;
         return regionId + "|" + sourceVehicleId + "|" + bucket;
     }

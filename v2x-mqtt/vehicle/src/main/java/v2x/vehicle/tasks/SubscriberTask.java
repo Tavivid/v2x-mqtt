@@ -81,7 +81,14 @@ public class SubscriberTask implements Runnable {
             return;
         }
 
-        String fileName = chunk.captureTsMillis() + ".pcd";
+        String fileName;
+        if (chunk.sourceFileName() != null && !chunk.sourceFileName().isBlank()) {
+            // 送信元が持っていたファイル名をそのまま使う
+            fileName = chunk.sourceFileName();
+        } else {
+            // 古い Publisher 互換用のフォールバック
+            fileName = chunk.captureTsMillis() + ".pcd";
+        }
         File out = new File(regionDir, fileName);
 
         int numPoints = pts.size();

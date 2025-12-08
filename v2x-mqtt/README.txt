@@ -85,7 +85,7 @@ MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
 VEHICLE_ID=vehicle-k \
 REGION_TIMELINE_DIR="./dataset/k15-44-59" \
 REGION_TIMELINE_STEP_MS=100 \
-SYNC_START_AT_SEC=$SYNC \
+SYNC_START_AT_SEC=1765225320 \
 ./gradlew --no-daemon :vehicle:run
 
 # 発行者両側
@@ -93,7 +93,7 @@ MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
 VEHICLE_ID=vehicle-m \
 SUB_TIMELINE_DIR="./dataset/subscription/m" \
 SUB_TIMELINE_STEP_MS=100 \
-SYNC_START_AT_SEC=$SYNC \
+SYNC_START_AT_SEC=1765225320 \
 ./gradlew --no-daemon :vehicle:run
 
 ログ例
