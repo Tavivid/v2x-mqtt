@@ -41,7 +41,7 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 ■ 2. Coordinator を起動
 ----------------------------------------
 # /request を受けて /control に fetch-request を出す実装を前提
-./gradlew :coordinator:run
+./gradlew :coordinator:run --args "11311"
 
 起動後の期待ログ例
 [COORD] connected ...
@@ -76,11 +76,16 @@ docker exec -it mosquitto sh -lc "mosquitto_sub -h 127.0.0.1 -t '\$SYS/#' -C 1"
 [3.3] Vehicle 起動
 # データセットが無ければ Publisher は自動スキップ
 # VEHICLE_ID は AppConfig の YAML を環境変数で上書き可能（重複起動時は必ず変えるか ClientID をユニーク化）
+
+SYNC=$(date -d 'now + 120 seconds' +%s)
+echo $SYNC
+
 # 購読者両側
 MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
-VEHICLE_ID=vehicle-a \
+VEHICLE_ID=vehicle-k \
 REGION_TIMELINE_DIR="./dataset/k15-44-59" \
 REGION_TIMELINE_STEP_MS=100 \
+SYNC_START_AT_SEC=$SYNC \
 ./gradlew --no-daemon :vehicle:run
 
 # 発行者両側
@@ -88,6 +93,7 @@ MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
 VEHICLE_ID=vehicle-m \
 SUB_TIMELINE_DIR="./dataset/subscription/m" \
 SUB_TIMELINE_STEP_MS=100 \
+SYNC_START_AT_SEC=$SYNC \
 ./gradlew --no-daemon :vehicle:run
 
 ログ例

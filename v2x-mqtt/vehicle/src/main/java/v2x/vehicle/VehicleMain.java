@@ -38,6 +38,7 @@ import java.net.InetSocketAddress;
  * PUB_REGION / SUB_REGION 単体指定はその側については無効化される。
  */
 public class VehicleMain {
+    private static volatile boolean syncDone = false;
 
     public static void main(String[] args) throws Exception {
         AppConfig cfg = AppConfig.load();
@@ -99,6 +100,8 @@ public class VehicleMain {
         // 既存の udpSendPort をベースに、region ごとに +1 していく
         int basePubPort = cfg.udpSendPort;
         String pubHost = System.getenv().getOrDefault("PUB_HOST", "127.0.0.1");
+
+        waitSyncStartIfConfigured();
 
         // ====== Publisher 側 ======
         // タイムラインモード:
@@ -175,13 +178,13 @@ public class VehicleMain {
         // ====== Subscriber 側 ======
         // タイムライン購読モード:
         //   SUB_TIMELINE_DIR       ... 「欲しい領域一覧 JSON」が並んでいるディレクトリ
-        //   SUB_TIMELINE_STEP_MS   ... フレーム間隔 (省略時 10000ms = 0.1Hz)
+        //   SUB_TIMELINE_STEP_MS   ... フレーム間隔 (省略時 100ms = 10Hz)
         //   SUB_TIMELINE_LOOP      ... "1" なら最後まで行ったら先頭に戻る
         String subTimelineDirPath = System.getenv("SUB_TIMELINE_DIR");
         long subTimelineStepMs;
         try {
             subTimelineStepMs = Long.parseLong(
-                    System.getenv().getOrDefault("SUB_TIMELINE_STEP_MS", "10000") // 0.1Hz
+                    System.getenv().getOrDefault("SUB_TIMELINE_STEP_MS", "100")
             );
         } catch (NumberFormatException e) {
             subTimelineStepMs = 10000L;
@@ -241,5 +244,31 @@ public class VehicleMain {
 
         // 終了しないように main スレッドをブロック
         Thread.currentThread().join();
+    }
+
+    // ====== 同期開始バリア (SYNC_START_AT_SEC が指定されていたら、その時刻まで待つ) ======
+    private static void waitSyncStartIfConfigured() {
+        String secStr = System.getenv("SYNC_START_AT_SEC");
+        if (secStr == null || secStr.isBlank()) {
+            return; // 指定なし → 何もしない
+        }
+        try {
+            long targetSec = Long.parseLong(secStr.trim());
+            while (true) {
+                long nowSec = System.currentTimeMillis() / 1000L;
+                long diff = targetSec - nowSec;
+                if (diff <= 0) {
+                    break;
+                }
+                long sleepMs = Math.min(diff * 1000L, 500L);
+                Thread.sleep(sleepMs);
+            }
+            System.out.println("[SYNC] started at " + System.currentTimeMillis() / 1000L
+                    + " (target=" + targetSec + ")");
+        } catch (NumberFormatException e) {
+            System.err.println("[SYNC] invalid SYNC_START_AT_SEC: " + secStr);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

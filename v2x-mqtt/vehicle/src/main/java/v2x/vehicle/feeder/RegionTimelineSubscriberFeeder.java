@@ -4,29 +4,36 @@ import v2x.vehicle.net.MasterClient;
 import v2x.vehicle.tasks.SubscriberTask;
 import v2x.vehicle.util.Jsons;
 
-import java.io.BufferedReader;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
- * 「欲しい領域タイムライン JSON」を元に Subscriber を動的に起動/停止するフィーダ。
+ * 「欲しい領域一覧」のタイムライン JSON に従って Subscriber を起動するフィーダ。
  *
- * - SUB_TIMELINE_DIR ... JSON が並んでいるディレクトリ（VehicleMain 側で指定）
- * - SUB_TIMELINE_STEP_MS ... フレーム間隔（デフォルト 10000ms = 0.1Hz）
- * - SUB_TIMELINE_LOOP ... "1" なら最後まで行ったら先頭に戻る
+ * - timelineDir: 例) ./sub-timeline
+ *   - 000000.json
+ *   - 000001.json
+ *   - ...
  *
- * JSON フォーマット（1ファイル = 1タイムステップ）:
+ * 各 JSON の形式:
+ *   ["cell-0a3c", "cell-0a3d"]
+ *   もしくは
+ *   { "regions": ["cell-0a3c", "cell-0a3d"] }
  *
- *   1) 配列形式（推奨）
- *      ["cell-0a3c", "cell-0a3d"]
- *
- *   2) オブジェクト形式
- *      { "regions": ["cell-0a3c", "cell-0a3d"] }
+ * 特徴:
+ *  - publisher の有無に関わらず、stepMs 間隔で JSON を読み進める
+ *  - 各 region について「初めてタイムライン上に現れたとき」にだけ
+ *    SubscriberTask スレッドを 1 本起動する（以降はそのまま受信し続ける）
+ *  - タイムライン側のスレッドは subscribe の成否でブロックしない
  */
 public class RegionTimelineSubscriberFeeder implements Runnable {
 
@@ -47,127 +54,113 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
 
     @Override
     public void run() {
-        try {
-            List<File> frames = listTimelineFiles(timelineDir);
-            if (frames.isEmpty()) {
-                System.out.println("[SUB-TL] no timeline json in dir=" + timelineDir.getAbsolutePath());
-                return;
-            }
+        System.out.println("[SUB-TL] start dir=" + timelineDir.getAbsolutePath()
+                + " stepMs=" + stepMs + " loop=" + loop);
 
-            // regionId -> Subscriber スレッド
-            Map<String, Thread> subscribers = new HashMap<>();
-
-            do {
-                for (File f : frames) {
-                    long frameStart = System.currentTimeMillis();
-
-                    // このフレームで「欲しい領域」一覧
-                    Set<String> desired = new LinkedHashSet<>(readRegionsFromJson(f));
-
-                    // 1) もう欲しくない領域は unsubscribe（= スレッド interrupt）
-                    Iterator<Map.Entry<String, Thread>> it = subscribers.entrySet().iterator();
-                    while (it.hasNext()) {
-                        Map.Entry<String, Thread> e = it.next();
-                        String regionId = e.getKey();
-                        if (!desired.contains(regionId)) {
-                            System.out.println("[SUB-TL] stop subscriber region=" + regionId
-                                    + " (no longer requested in " + f.getName() + ")");
-                            e.getValue().interrupt(); // SubscriberTask 側で sleep が InterruptedException になって終了
-                            it.remove();
-                        }
-                    }
-
-                    // 2) 新たに欲しくなった領域は subscribe 開始
-                    for (String regionId : desired) {
-                        if (subscribers.containsKey(regionId)) {
-                            continue; // 既に購読中
-                        }
-                        SubscriberTask subTask = new SubscriberTask(master, regionId);
-                        Thread th = new Thread(subTask, "Subscriber-" + regionId);
-                        th.setDaemon(true);
-                        th.start();
-                        subscribers.put(regionId, th);
-                        System.out.println("[SUB-TL] started subscriber region=" + regionId
-                                + " from frame=" + f.getName());
-                    }
-
-                    long elapsed = System.currentTimeMillis() - frameStart;
-                    long sleep = stepMs - elapsed;
-                    if (sleep > 0) {
-                        try {
-                            TimeUnit.MILLISECONDS.sleep(sleep);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-
-                    if (Thread.currentThread().isInterrupted()) {
-                        break;
-                    }
-                }
-            } while (loop && !Thread.currentThread().isInterrupted());
-
-            // 終了時に全部止める
-            for (Thread th : subscribers.values()) {
-                th.interrupt();
-            }
-            subscribers.clear();
-            System.out.println("[SUB-TL] stopped all subscribers.");
-
-        } catch (Exception e) {
-            System.err.println("[SUB-TL] error: " + e);
-            e.printStackTrace();
+        // タイムライン JSON 一覧を取得
+        final List<Path> frames = listTimelineFiles(timelineDir.toPath());
+        if (frames.isEmpty()) {
+            System.err.println("[SUB-TL] no timeline json files under " + timelineDir.getAbsolutePath());
+            return;
         }
+
+        // すでに Subscriber を起動した領域
+        final Set<String> startedRegions = new HashSet<>();
+
+        outerLoop:
+        while (!Thread.currentThread().isInterrupted()) {
+            for (int i = 0; i < frames.size(); i++) {
+                Path framePath = frames.get(i);
+
+                List<String> regionList;
+                try {
+                    regionList = readRegionsFromJson(framePath);
+                } catch (IOException e) {
+                    System.err.println("[SUB-TL] failed to read timeline json: "
+                            + framePath + " : " + e);
+                    regionList = List.of();
+                }
+
+                // このフレームで欲しい領域について、
+                // 「まだ Subscriber を起動していない領域」だけ新規に起動する
+                for (String regionId : regionList) {
+                    if (startedRegions.contains(regionId)) {
+                        continue;
+                    }
+                    startedRegions.add(regionId);
+
+                    // ★ SubscriberTask を別スレッドで起動するだけ
+                    //    → publisher がまだいなくてもここではブロックしない
+                    SubscriberTask task = new SubscriberTask(master, regionId);
+                    Thread t = new Thread(task, "Subscriber-" + regionId);
+                    t.setDaemon(true);
+                    t.start();
+
+                    System.out.println("[SUB-TL] started subscriber for region="
+                            + regionId + " at frameIndex=" + i);
+                }
+
+                // フレーム間の待ち時間
+                try {
+                    Thread.sleep(stepMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break outerLoop;
+                }
+            }
+
+            if (!loop) {
+                break;
+            }
+        }
+
+        System.out.println("[SUB-TL] finished.");
+    }
+
+    // ====== ユーティリティ（RegionTimelineFeeder と同様） ======
+
+    private static List<Path> listTimelineFiles(Path dir) {
+        File[] files = dir.toFile().listFiles((d, name) -> name.endsWith(".json"));
+        if (files == null) {
+            return List.of();
+        }
+        return Arrays.stream(files)
+                .map(File::toPath)
+                .sorted(Comparator.comparing(Path::getFileName))
+                .collect(Collectors.toList());
     }
 
     /**
-     * timeline ディレクトリ内の *.json を名前順にソートして返す
+     * JSON から領域一覧を読む。
+     *  - ["cell-0a3c", "cell-0a3d"]
+     *  - {"regions":["cell-0a3c","cell-0a3d"]}
+     * の両方を許容。
      */
-    private static List<File> listTimelineFiles(File dir) {
-        File[] arr = dir.listFiles((d, name) -> name.toLowerCase().endsWith(".json"));
-        if (arr == null) return Collections.emptyList();
-        Arrays.sort(arr, Comparator.comparing(File::getName));
-        return Arrays.asList(arr);
-    }
-
-    /**
-     * 1フレーム分 JSON から regionId リストを読む
-     */
-    @SuppressWarnings("unchecked")
-    private static List<String> readRegionsFromJson(File file) throws java.io.IOException {
-        try (Reader r = new BufferedReader(
-                new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
-
-            Object obj = Jsons.GSON.fromJson(r, Object.class);
-            if (obj == null) {
-                return Collections.emptyList();
-            }
-
-            if (obj instanceof List) {
-                // ["cell-0a3c", "cell-0a3d"]
-                List<?> raw = (List<?>) obj;
-                List<String> regions = new ArrayList<>();
-                for (Object o : raw) {
-                    if (o != null) regions.add(o.toString());
-                }
-                return regions;
-            } else if (obj instanceof Map) {
-                // { "regions": [...] }
-                Map<?, ?> map = (Map<?, ?>) obj;
-                Object v = map.get("regions");
-                if (v instanceof List) {
-                    List<?> raw = (List<?>) v;
-                    List<String> regions = new ArrayList<>();
-                    for (Object o : raw) {
-                        if (o != null) regions.add(o.toString());
-                    }
-                    return regions;
-                }
-            }
-
-            throw new IllegalArgumentException(
-                    "timeline json must be array or {\"regions\":[...]}, file=" + file.getName());
+    private static List<String> readRegionsFromJson(Path jsonPath) throws IOException {
+        String text = Files.readString(jsonPath, StandardCharsets.UTF_8).trim();
+        if (text.isEmpty()) {
+            return List.of();
         }
+
+        // 配列だけの形式 ["cell-0a3c", ...]
+        if (text.startsWith("[")) {
+            String[] arr = Jsons.GSON.fromJson(text, String[].class);
+            return Arrays.asList(arr);
+        }
+
+        // オブジェクト形式 {"regions":[...]} を想定
+        JsonObject obj = Jsons.GSON.fromJson(text, JsonObject.class);
+        JsonElement regionsElem = obj.get("regions");
+        if (regionsElem == null || !regionsElem.isJsonArray()) {
+            return List.of();
+        }
+        JsonArray arr = regionsElem.getAsJsonArray();
+        List<String> result = new ArrayList<>(arr.size());
+        for (JsonElement e : arr) {
+            if (e.isJsonPrimitive()) {
+                result.add(e.getAsString());
+            }
+        }
+        return result;
     }
 }
