@@ -1,7 +1,12 @@
 # === Gradle build / wrapper ===
 .gradle/
 **/build/
-!gradle/wrapper/gradle-wrapper.jar  # wrapper本体は残す
+**/out/
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!gradlew
+!gradlew.bat
 
 # === Java artifacts ===
 *.class

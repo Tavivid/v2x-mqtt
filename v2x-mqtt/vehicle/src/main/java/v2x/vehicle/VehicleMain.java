@@ -12,6 +12,7 @@ import v2x.vehicle.tasks.PublisherTask;
 import v2x.vehicle.tasks.SubscriberTask;
 
 import java.io.File;
+import java.io.PrintStream;
 import java.net.InetSocketAddress;
 
 /**
@@ -41,6 +42,7 @@ public class VehicleMain {
     private static volatile boolean syncDone = false;
 
     public static void main(String[] args) throws Exception {
+        installTimestampedLogger();
         AppConfig cfg = AppConfig.load();
         System.out.println("[DEBUG] datasetPath=" + cfg.datasetPath
                 + " datasetGlob=" + cfg.datasetGlob
@@ -270,5 +272,38 @@ public class VehicleMain {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static void installTimestampedLogger() {
+        PrintStream baseOut = System.out;
+        System.setOut(new PrintStream(baseOut) {
+            @Override
+            public void println(String x) {
+                super.println("[" + nowTs() + "] " + x);
+            }
+
+            @Override
+            public void println(Object x) {
+                super.println("[" + nowTs() + "] " + String.valueOf(x));
+            }
+        });
+
+        PrintStream baseErr = System.err;
+        System.setErr(new PrintStream(baseErr) {
+            @Override
+            public void println(String x) {
+                super.println("[" + nowTs() + "] " + x);
+            }
+
+            @Override
+            public void println(Object x) {
+                super.println("[" + nowTs() + "] " + String.valueOf(x));
+            }
+        });
+    }
+
+    private static String nowTs() {
+        // 例: 2025-12-09T03:21:45.123
+        return java.time.LocalDateTime.now().toString();
     }
 }
