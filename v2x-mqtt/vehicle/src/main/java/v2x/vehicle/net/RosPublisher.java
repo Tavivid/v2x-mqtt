@@ -33,6 +33,10 @@ public class RosPublisher implements AutoCloseable {
         this.listenPort = listenPort;
     }
 
+    public boolean hasSubscribers() {
+        return !clients.isEmpty();
+    }
+
     public synchronized void start() throws IOException {
         if (running) return;
         running = true;

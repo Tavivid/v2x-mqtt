@@ -101,6 +101,9 @@ public class RegionTimelineFeeder implements Runnable {
                 Path framePath = frames.get(i);
                 long frameIndex = i; // ファイル名から取っても良いが、とりあえず添字
 
+                String frameName = framePath.getFileName().toString();
+                System.out.println("[Timeline] start frameIndex=" + i + " file=" + frameName);
+
                 List<String> regionList;
                 try {
                     regionList = readRegionsFromJson(framePath);
@@ -160,6 +163,12 @@ public class RegionTimelineFeeder implements Runnable {
                         continue;
                     }
 
+                    if (!ctx.publisher.hasSubscribers()) {
+                        // 必要ならデバッグ用に 1 回だけログ出すフラグを持たせても OK
+                        // System.out.println("[PUB] no subscribers for region=" + regionId + " -> skip");
+                        continue;
+                    }
+
                     try {
                         PointCloudChunk chunk = ((DatasetPointCloudSource) source)
                                 .nextChunk(vehicleId, regionId, cfg.maxPointsPerChunk);
@@ -185,11 +194,10 @@ public class RegionTimelineFeeder implements Runnable {
                         ctx.publisher.publish(payload);
 
                         //int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
-                        System.out.println("[PUB] frame=" + frameIndex
-                                + " region=" + regionId
-                                + " vehicleId=" + vehicleId
-                                + " ts=" + chunk.captureTsMillis()
-                                + " points=" + pointCount);
+                        //System.out.println("[PUB] frame=" + frameIndex
+                        //        + " region=" + regionId
+                        //        + " vehicleId=" + vehicleId
+                        //        + " points=" + pointCount);
                     } catch (Exception e) {
                         System.err.println("[PUB] error while sending frame=" + frameIndex
                                 + " region=" + regionId + " : " + e);

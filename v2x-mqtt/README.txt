@@ -283,9 +283,9 @@ VehicleMain の先頭で waitSyncStartIfConfigured() が呼ばれ、
 Publisher 側:
 
   MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
-  VEHICLE_ID=vehicle-a \
-  REGION_TIMELINE_DIR="./timeline/pub-a" \
-  REGION_TIMELINE_STEP_MS=100 \
+  VEHICLE_ID=vehicle-k \
+  REGION_TIMELINE_DIR="/home/tavivid/v2x-pcd/k15-44-59" \
+  REGION_TIMELINE_STEP_MS=90 \
   SYNC_START_AT_SEC=$SYNC \
   ./gradlew --no-daemon :vehicle:run
 

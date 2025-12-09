@@ -44,9 +44,11 @@ public class VehicleMain {
     public static void main(String[] args) throws Exception {
         installTimestampedLogger();
         AppConfig cfg = AppConfig.load();
+        /* 
         System.out.println("[DEBUG] datasetPath=" + cfg.datasetPath
                 + " datasetGlob=" + cfg.datasetGlob
                 + " datasetLoop=" + cfg.datasetLoop);
+        */
 
         String vehicleId = cfg.vehicleId;
 
@@ -302,8 +304,40 @@ public class VehicleMain {
         });
     }
 
+    private static final long SYNC_BASE_SEC;
+    static {
+        String secStr = System.getenv("SYNC_START_AT_SEC");
+        long v = -1L;
+        if (secStr != null && !secStr.isBlank()) {
+            try {
+                v = Long.parseLong(secStr.trim());
+            } catch (NumberFormatException ignore) {
+                v = -1L;
+            }
+        }
+        SYNC_BASE_SEC = v;
+    }
+
+
+    private static final long START_NANO = System.nanoTime();
+
     private static String nowTs() {
         // 例: 2025-12-09T03:21:45.123
-        return java.time.LocalDateTime.now().toString();
+        long baseMillis = SYNC_BASE_SEC * 1000L;
+        long nowMillis  = System.currentTimeMillis();
+        long diffMillis = nowMillis - baseMillis;
+
+        if (diffMillis < 0L) {
+            diffMillis = 0L;
+        }
+
+        long sec = diffMillis / 1000L;
+        long ms  = diffMillis % 1000L;
+
+        long min = sec / 60L;
+        long s   = sec % 60L;
+
+        // 00:00.000 形式（分:秒.ミリ秒）
+        return String.format("%02d:%02d.%03d", min, s, ms);
     }
 }

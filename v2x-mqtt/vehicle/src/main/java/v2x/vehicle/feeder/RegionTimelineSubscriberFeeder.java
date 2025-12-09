@@ -69,6 +69,9 @@ public class RegionTimelineSubscriberFeeder implements Runnable {
             for (int i = 0; i < frames.size(); i++) {
                 Path framePath = frames.get(i);
 
+                String frameName = framePath.getFileName().toString();
+                System.out.println("[SUB-TL] start frameIndex=" + i + " file=" + frameName);
+
                 List<String> regionList;
                 try {
                     regionList = readRegionsFromJson(framePath);
