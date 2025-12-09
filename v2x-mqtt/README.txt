@@ -286,16 +286,16 @@ Publisher 側:
   VEHICLE_ID=vehicle-k \
   REGION_TIMELINE_DIR="/home/tavivid/v2x-pcd/k15-44-59" \
   REGION_TIMELINE_STEP_MS=90 \
-  SYNC_START_AT_SEC=$SYNC \
+  SYNC_START_AT_SEC=1765315118 \
   ./gradlew --no-daemon :vehicle:run
 
 Subscriber 側:
 
   MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
-  VEHICLE_ID=vehicle-b \
-  SUB_TIMELINE_DIR="./timeline/sub-b" \
+  VEHICLE_ID=vehicle-m \
+  SUB_TIMELINE_DIR="/home/tavivid/v2x-pcd/subscription/m" \
   SUB_TIMELINE_STEP_MS=100 \
-  SYNC_START_AT_SEC=$SYNC \
+  SYNC_START_AT_SEC=1765315118 \
   ./gradlew --no-daemon :vehicle:run
 
 両者とも指定時刻まで待機し、その後に各スレッドの起動・タイムライン読みが始まります。

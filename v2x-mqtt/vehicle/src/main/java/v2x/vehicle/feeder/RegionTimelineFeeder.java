@@ -171,7 +171,7 @@ public class RegionTimelineFeeder implements Runnable {
 
                     try {
                         PointCloudChunk chunk = ((DatasetPointCloudSource) source)
-                                .nextChunk(vehicleId, regionId, cfg.maxPointsPerChunk);
+                                .nextChunkAtFrame(vehicleId, regionId, frameIndex, cfg.maxPointsPerChunk);
                         if (chunk == null) {
                             // その領域のデータが尽きている
                             System.out.println("[DATASET] no more data for region=" + regionId);

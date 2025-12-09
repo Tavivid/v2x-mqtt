@@ -74,7 +74,7 @@ public class SubscriberTask implements Runnable {
         }
 
         // ベースディレクトリ: カレントディレクトリ配下の recv-pcd
-        File baseDir = new File("recv-pcd");
+        File baseDir = new File("/home/tavivid/v2x-pcd/received");
         File regionDir = new File(baseDir, chunk.regionId());
         if (!regionDir.exists() && !regionDir.mkdirs()) {
             System.err.println("[SUB] failed to create dir: " + regionDir.getAbsolutePath());
