@@ -121,6 +121,8 @@ public class RegionTimelineFeeder implements Runnable {
                 Set<String> toStop = new HashSet<>(active.keySet());
                 toStop.removeAll(currentRegions);
 
+                List<String> stoppedRegions = new ArrayList<>();
+
                 for (String regionId : toStop) {
                     RegionPublisherCtx ctx = active.remove(regionId);
                     if (ctx != null) {
@@ -129,12 +131,20 @@ public class RegionTimelineFeeder implements Runnable {
                             ctx.publisher.close();
                         } catch (Exception ignore) {
                         }
+                        stoppedRegions.add(regionId);
                     }
+                }
+
+                if (!stoppedRegions.isEmpty()) {
+                    System.out.println("[Timeline] stop publishers frame=" + frameIndex
+                            + " regions=" + String.join(",", stoppedRegions));
                 }
 
                 // 新規に開始すべき領域 = current - active
                 Set<String> toStart = new HashSet<>(currentRegions);
                 toStart.removeAll(active.keySet());
+
+                List<String> startedRegions = new ArrayList<>();
 
                 for (String regionId : toStart) {
                     int port = basePubPort + (++portOffset);
@@ -144,9 +154,9 @@ public class RegionTimelineFeeder implements Runnable {
                     try {
                         rp.start();
                         long elapsed = System.currentTimeMillis() - t0;
-                        System.out.println("[Timeline] started publisher region=" + regionId
-                                + " host=" + pubHost + " port=" + port + " (elapsed=" + elapsed + "ms)");
+                        
                         active.put(regionId, new RegionPublisherCtx(regionId, rp));
+                        startedRegions.add(regionId);
                     } catch (Exception e) {
                         System.err.println("[Timeline] failed to start publisher for region=" + regionId + " : " + e);
                         try {
@@ -154,6 +164,11 @@ public class RegionTimelineFeeder implements Runnable {
                         } catch (Exception ignore) {
                         }
                     }
+                }
+
+                if (!startedRegions.isEmpty()) {
+                    System.out.println("[Timeline] started publishers frame=" + frameIndex
+                            + " regions=" + String.join(",", startedRegions));
                 }
 
                 // ---- このフレームでアクティブな領域に 1回ずつ送信 ----
