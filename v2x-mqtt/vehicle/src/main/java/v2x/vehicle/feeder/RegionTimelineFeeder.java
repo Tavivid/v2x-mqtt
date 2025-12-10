@@ -126,7 +126,7 @@ public class RegionTimelineFeeder implements Runnable {
                 for (String regionId : toStop) {
                     RegionPublisherCtx ctx = active.remove(regionId);
                     if (ctx != null) {
-                        System.out.println("[Timeline] stop publisher for region=" + regionId);
+                        //System.out.println("[Timeline] stop publisher for region=" + regionId);
                         try {
                             ctx.publisher.close();
                         } catch (Exception ignore) {
