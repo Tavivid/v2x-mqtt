@@ -78,7 +78,8 @@ public class RegionTimelineFeeder implements Runnable {
         // Dataset 読み込み
         final PointCloudSource source;
         try {
-            source = new DatasetPointCloudSource(cfg.datasetPath, cfg.datasetGlob, cfg.datasetLoop);
+            String datasetRoot = timelineDir.getAbsolutePath();
+            source = new DatasetPointCloudSource(datasetRoot, cfg.datasetGlob, cfg.datasetLoop);
         } catch (Exception e) {
             System.err.println("[Timeline] dataset not available: " + e.getMessage());
             return;
