@@ -1,49 +1,57 @@
-v2x-mqtt — ROS1風 V2X 点群共有デモ (README.txt)
+v2x-mqtt — rosjava / ROS1 V2X 点群共有デモ (README.txt)
 
-このリポジトリは、ROS1 の pub/sub に似た「自前 Master + TCP 通信」で
-LiDAR 点群をリージョン単位で車両間共有するためのプロトタイプです。
+このリポジトリは、ROS1 (roscore) + rosjava を使った
+「リージョン単位の LiDAR 点群共有」のプロトタイプです。
 
 - MQTT ブローカは現在は使っていません（mosquitto ディレクトリなどは旧構成の名残）
-- Coordinator (= MasterServer) が「ROS master 風」の名前解決を担当
-- Vehicle が RosPublisher / RosSubscriber を使って各リージョンの /data トピックで通信
-- 実験では、あらかじめ領域ごとに分割済みの PCD データセットを使い、
+- 独自の MasterServer は使わず、標準の ROS master (roscore) を利用します
+- Vehicle は rosjava ノードとして /v2x/region/{regionId}/data トピックで通信します
+- 実験では、あらかじめ領域ごとに分割済みの PCD データセットを用意し、
   JSON タイムラインに従って 10Hz 相当で送受信します
+- 必要に応じて、UNIX 時刻を使った「起動同期 (TIMELINE_SYNC_UNIX)」も利用できます
+
 
 ========================================
 ■ 1. サブプロジェクト構成
 ========================================
 - config/
-  - v2x-config.yml … 共通の設定（Vehicle/Coordinator の両方から参照）
-
-- coordinator/
-  - v2x.coordinator.MasterServer
-    - ROS1 の roscore のような役割
-    - registerPublisher / registerSubscriber に相当する処理を担当
-  - v2x.coordinator.CoordinatorMain
-    - MasterServer を起動する main クラス
+  - v2x-config.yml … 共通の設定（Vehicle から参照）
 
 - vehicle/
-  - v2x.vehicle.VehicleMain … 車両ノードのエントリポイント
+  - v2x.vehicle.VehicleMain
+    - 旧構成のエントリポイント（独自 MasterServer + TCP 用）
+    - rosjava 版では基本的に使いません（互換用に残してあります）
+  - v2x.vehicle.ros.*
+    - VehicleRosMain … rosjava ノードのエントリポイント（:vehicle:runRos で起動）
+    - VehicleTimelineNode … JSON タイムラインに従って
+      /v2x/region/{regionId}/data を publish / subscribe する NodeMain
   - v2x.vehicle.net.*
-    - MasterClient … MasterServer との通信
-    - RosPublisher … topic を公開する TCP サーバ
-    - RosSubscriber … topic を購読する TCP クライアント
-    - Topics … v2x/region/{region}/data などのトピック名ユーティリティ
+    - Topics … v2x/region/{regionId}/data などのトピック名ユーティリティ
+    - RosPublisher / RosSubscriber / MasterClient などは旧実装用クラス
+      （rosjava 版では基本的には使用しない）
   - v2x.vehicle.datasource.DatasetPointCloudSource
     - データセットから PointCloudChunk を供給
-  - v2x.vehicle.feeder.*
-    - PublishFeeder … 旧来の CSV ベース Publish シナリオ
-    - SubscribeFeeder … 旧来の CSV ベース Subscribe シナリオ
-    - RegionTimelineFeeder … JSON タイムラインに従って Publisher 群を制御
-    - RegionTimelineSubscriberFeeder … JSON タイムラインに従って Subscriber 群を制御
   - v2x.vehicle.tasks.*
-    - PublisherTask … 単一リージョン固定の簡易 Publisher
-    - SubscriberTask … 単一リージョン固定の Subscriber（受信した点群を PCD 保存）
+    - PublisherTask / SubscriberTask など、旧構成での簡易タスク
+      （rosjava タイムライン版では直接は使いません）
+  - v2x.vehicle.util.*
+    - PointCloudSerializer … PointCloudChunk を ByteMultiArray にシリアライズ
+    - Jsons … Gson ラッパユーティリティ
+
+- coordinator/
+  - v2x.coordinator.MasterServer / CoordinatorMain
+    - 独自 Master + TCP 版のためのコンポーネント
+    - rosjava / roscore を使う現行構成では通常は使用しません
+    - 過去構成の参考用として残しています
+
 
 ========================================
 ■ 2. 必要環境
 ========================================
 - WSL(Ubuntu) or Linux
+- ROS1 (例: noetic) がインストールされていること
+  - roscore コマンドが使えること
+- rosjava 関連の依存（本リポジトリの Gradle から取得されます）
 - JDK 17+
 - Gradle ラッパー（同梱の ./gradlew を使用）
 - LiDAR データセット（後述のディレクトリ構成で配置）
@@ -52,35 +60,38 @@ LiDAR 点群をリージョン単位で車両間共有するためのプロト�
 Docker / mosquitto は現在の構成では必須ではありません
 （mqtt ブローカは使っていないため）。
 
+
 ========================================
 ■ 3. ビルド & 共通コマンド
 ========================================
 # 依存解決・ビルドのみ
 ./gradlew build
 
-# coordinator だけ実行
-./gradlew :coordinator:run
+# rosjava Vehicle ノードのみ実行（ROS1 用）
+./gradlew :vehicle:runRos
 
-# vehicle だけ実行
-./gradlew :vehicle:run
+※ いずれも ROS の設定（ROS_MASTER_URI, ROS_IP）は
+  実行シェルの環境変数として指定してください。
+
 
 ========================================
-■ 4. Coordinator (MasterServer) の起動
+■ 4. ROS master (roscore) の起動
 ========================================
-Coordinator は ROS1 の roscore に相当するコンポーネントです。
-Vehicle からの registerPublisher/registerSubscriber 要求を受け、
-トピックごとの接続先を教えます。
+rosjava 版では、独自の Coordinator / MasterServer は使わず、
+標準の roscore を利用します。
 
-デフォルトポート: 11311
+別ターミナルで roscore を起動しておきます:
 
-起動例:
-  ./gradlew --no-daemon :coordinator:run --args "11311"
+  roscore
 
-期待ログ例:
-  [MASTER] listen on 0.0.0.0:11311
-  [MASTER] registerPublisher ... topic=v2x/region/cell-0a3c/data ...
-  [MASTER] registerSubscriber ... topic=v2x/region/cell-0a3c/data ...
-  ...
+その上で、Vehicle 側では例えば以下のように環境変数を設定します:
+
+  export ROS_MASTER_URI=http://127.0.0.1:11311
+  export ROS_IP=127.0.0.1
+
+※ WSL / Docker 等でホストと疎通する際は、
+  適切な IP アドレス (例: 192.168.x.x など) を ROS_IP に指定してください。
+
 
 ========================================
 ■ 5. データセットとタイムラインの形式
@@ -111,12 +122,12 @@ DatasetPointCloudSource は以下のようなディレクトリ構成を前提�
 
 (2) Publisher 用 JSON タイムライン
 
-RegionTimelineFeeder は「フレームごとにどのリージョンを持っているか」を
+VehicleTimelineNode は「フレームごとにどのリージョンを持っているか」を
 JSON で指定します。ディレクトリ例:
 
-  REGION_TIMELINE_DIR=./timeline/pub-A
+  REGION_TIMELINE_DIR=/home/tavivid/v2x-pcd/k15-44-59
 
-  ./timeline/pub-A/
+  /home/tavivid/v2x-pcd/k15-44-59/
     000000.json
     000001.json
     000002.json
@@ -132,7 +143,8 @@ JSON で指定します。ディレクトリ例:
 
 - フレーム間隔は REGION_TIMELINE_STEP_MS (ms) で指定
   - 例: 100ms -> 10Hz 相当
-- そのフレームで regions に含まれているリージョンだけが Publisher になる
+- そのフレームで regions に含まれているリージョンだけが Publisher として有効になり、
+  各リージョンについて /v2x/region/{regionId}/data に ByteMultiArray を publish します
 - 連続フレームで同じ region が登場する場合、その Publisher は継続し、
   次のフレームでも点群を送信します
 - 10点以下のチャンクは Publisher 側で送信スキップします
@@ -141,12 +153,12 @@ JSON で指定します。ディレクトリ例:
 
 (3) Subscriber 用 JSON タイムライン
 
-RegionTimelineSubscriberFeeder は
+同じく VehicleTimelineNode は
 「ある時刻にどのリージョンを購読したいか」を JSON で指定します:
 
-  SUB_TIMELINE_DIR=./timeline/sub-B
+  SUB_TIMELINE_DIR=/home/tavivid/v2x-pcd/subscription/vehicle-m
 
-  ./timeline/sub-B/
+  /home/tavivid/v2x-pcd/subscription/vehicle-m/
     000000.json
     000001.json
     ...
@@ -160,100 +172,121 @@ RegionTimelineSubscriberFeeder は
 - SUB_TIMELINE_STEP_MS ごとに次の JSON を読み、
   その時点で必要なリージョンの Subscriber を登録/解除します
 - Publisher がまだいなくても処理は止まらず、フレームを読み進めます
-- 受信した点群は SubscriberTask によって PCD として保存されます
+- 受信した点群は VehicleTimelineNode 内の saveChunkAsPcd() により
+  /home/tavivid/v2x-pcd/received/{regionId}/{fileName}.pcd に保存されます
+
 
 ========================================
-■ 6. Vehicle の起動モード
+■ 6. Vehicle（rosjava）の起動モード
 ========================================
 
-VehicleMain はいくつかのモードを持っています。
-現在主に使うのは「JSON タイムラインモード」です。
+rosjava 版では、VehicleRosMain / VehicleTimelineNode を使って、
+1 プロセスで Publisher と Subscriber の両方を扱うことも、
+どちらか片方のみを有効にすることもできます。
+
+エントリポイント:
+  - :vehicle:runRos  → VehicleRosMain を起動
+
+基本の環境変数:
+
+- ROS_MASTER_URI        … roscore の URI (例: http://127.0.0.1:11311)
+- ROS_IP                … この Vehicle の IP
+- VEHICLE_ID            … 車両ID（ログ/メタデータ用）
+
+Publisher 用:
+
+- REGION_TIMELINE_DIR   … Publisher 用タイムライン JSON ディレクトリ
+- REGION_TIMELINE_STEP_MS … フレーム間隔(ms) 例: 100 (=10Hz)
+- REGION_TIMELINE_LOOP  … "1" なら最後まで行ったら先頭に戻る（周回）
+                           "0" または未設定なら 1 周して停止
+
+Subscriber 用:
+
+- SUB_TIMELINE_DIR      … Subscriber 用タイムライン JSON ディレクトリ
+- SUB_TIMELINE_STEP_MS  … フレーム間隔(ms)
+- SUB_TIMELINE_LOOP     … "1" ならループ、"0" または未設定なら 1 周して停止
+
+データセット:
+
+- DATASET_PATH / DATASET_GLOB / DATASET_LOOP
+  - v2x-config.yml に設定があればそちらが優先されます
+  - さらに環境変数で上書き可能（詳細は AppConfig を参照）
+
 
 ----------------------------------------
-(6-1) JSON タイムライン Publisher モード
+(6-1) JSON タイムライン Publisher モード（rosjava）
 ----------------------------------------
 
-環境変数:
-
-- MASTER_HOST, MASTER_PORT … Coordinator(MasterServer) の場所
-- VEHICLE_ID                 … 車両ID（ログ/メタデータ用）
-- REGION_TIMELINE_DIR        … Publisher 用タイムライン JSON ディレクトリ
-- REGION_TIMELINE_STEP_MS    … フレーム間隔(ms) 例: 100 (=10Hz)
-- REGION_TIMELINE_LOOP       … "1" なら最後まで行ったら先頭に戻る
-- DATASET_PATH, DATASET_GLOB, DATASET_LOOP … v2x-config.yml または環境変数
+Publisher だけを動かしたい場合は、REGION_TIMELINE_* を設定し、
+SUB_TIMELINE_DIR を設定しない、または存在しないディレクトリにしておきます。
 
 起動例（Publisher 側 Vehicle）:
 
-  MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
-  VEHICLE_ID=vehicle-a \
-  REGION_TIMELINE_DIR="./timeline/pub-a" \
+  export ROS_MASTER_URI=http://127.0.0.1:11311
+  export ROS_IP=127.0.0.1
+
+  VEHICLE_ID=vehicle-k \
+  REGION_TIMELINE_DIR="/home/tavivid/v2x-pcd/k15-44-59" \
   REGION_TIMELINE_STEP_MS=100 \
   REGION_TIMELINE_LOOP=0 \
-  ./gradlew --no-daemon :vehicle:run
+  ./gradlew --no-daemon :vehicle:runRos
 
 ログ例:
 
-  [DEBUG] datasetPath=./dataset/k15-44-59 datasetGlob=*.pcd datasetLoop=true
-  [Vehicle] id=vehicle-a master=127.0.0.1:11311 ...
-  [Timeline] start dir=/.../timeline/pub-a stepMs=100 loop=false
-  [Timeline] started publisher region=cell-0a3c host=127.0.0.1 port=51517
-  [PUB] frame=0 region=cell-0a3c vehicleId=vehicle-a ts=... points=12345
+  [00:00.000] [PUB-TL] started timeline dir=/home/tavivid/v2x-pcd/k15-44-59 stepMs=100 loop=false syncUnix=0
+  [00:00.001] [PUB-TL] reading timeline frame=0 file=000000.json
+  [00:00.001] [PUB-TL] region active: cell-0a3c
+  [00:00.010] [PUB-TL] reading timeline frame=1 file=000001.json
   ...
 
 ※ データセットが見つからない場合は Publisher は自動的にスキップされます。
+※ REGION_TIMELINE_LOOP=1 の場合は、最後まで行った後に 0 フレームへ戻り、周回します。
 
 
 ----------------------------------------
-(6-2) JSON タイムライン Subscriber モード
+(6-2) JSON タイムライン Subscriber モード（rosjava）
 ----------------------------------------
 
-環境変数:
-
-- MASTER_HOST, MASTER_PORT … Coordinator の場所
-- VEHICLE_ID                 … 車両ID
-- SUB_TIMELINE_DIR           … Subscriber 用タイムライン JSON ディレクトリ
-- SUB_TIMELINE_STEP_MS       … フレーム間隔(ms)
-- SUB_TIMELINE_LOOP          … "1" ならループ
+Subscriber だけを動かしたい場合は、SUB_TIMELINE_* を設定し、
+REGION_TIMELINE_DIR を設定しない、または存在しないディレクトリにしておきます。
 
 起動例（Subscriber 側 Vehicle）:
 
-  MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
-  VEHICLE_ID=vehicle-b \
-  SUB_TIMELINE_DIR="./timeline/sub-b" \
+  export ROS_MASTER_URI=http://127.0.0.1:11311
+  export ROS_IP=127.0.0.1
+
+  VEHICLE_ID=vehicle-m \
+  SUB_TIMELINE_DIR="/home/tavivid/v2x-pcd/subscription/m" \
   SUB_TIMELINE_STEP_MS=100 \
   SUB_TIMELINE_LOOP=0 \
-  ./gradlew --no-daemon :vehicle:run
+  ./gradlew --no-daemon :vehicle:runRos
 
 ログ例:
 
-  [Vehicle] id=vehicle-b master=127.0.0.1:11311 ...
-  [SUB] region timeline started dir=/.../timeline/sub-b stepMs=100 loop=false
-  [SUB] subscribe region=cell-0a3c topic=v2x/region/cell-0a3c/data
-  [SUB] received chunk region=cell-0a3c vehicleId=vehicle-a ts=... points=12345
-  [SUB] saved PCD file: recv-pcd/cell-0a3c/000000.pcd
+  [00:00.000] [SUB-TL] started timeline dir=/home/tavivid/v2x-pcd/subscription/m stepMs=100 loop=false syncUnix=0
+  [00:00.001] [SUB] received chunk region=cell-0a3c vehicleId=vehicle-k ts=... points=12345
+  [00:00.002] [SUB] saved PCD file: /home/tavivid/v2x-pcd/received/cell-0a3c/000000.pcd
   ...
 
 受信した点群は以下のように保存されます:
 
-  recv-pcd/
+  /home/tavivid/v2x-pcd/received/
     cell-0a3c/
       000000.pcd   ← 送信元データセットと同じファイル名
       000001.pcd
       ...
 
-送信側が `sourceFileName` を持っていない場合は
+送信側が sourceFileName を持っていない場合は
 `{timestamp}.pcd` のような名前になります。
 
 
 ----------------------------------------
-(6-3) CSV モード / 単一リージョンモード（旧仕様）
+(6-3) 旧 CSV モード / 単一リージョンモード（互換用）
 ----------------------------------------
-
-互換のために以下のモードも残っています（README の詳細は省略）。
 
 - CSV Publish モード
   - PUB_FEED_CSV, PUB_FEED_LOOP
-  - v2x.vehicle.feeder.PublishFeeder を利用
+  - v2x.vehicle.feeder.PublishFeeder を利用（VehicleMain 経由）
 
 - CSV Subscribe モード
   - SUB_FEED_CSV, SUB_FEED_LOOP
@@ -263,17 +296,20 @@ VehicleMain はいくつかのモードを持っています。
   - pubRegion / SUB_REGION (システムプロパティ or 環境変数)
   - PublisherTask / SubscriberTask を直接起動
 
-現状の実験フローでは JSON タイムラインモードを主に使用します。
+これらは独自 Master + TCP を使う旧構成用であり、
+rosjava / roscore を使う現行の実験フローでは
+基本的には JSON タイムライン + VehicleTimelineNode を用います。
+
 
 ========================================
-■ 7. 同期起動 (SYNC_START_AT_SEC)
+■ 7. 同期起動 (TIMELINE_SYNC_UNIX)
 ========================================
 
-Publisher/Subscriber を「できるだけ同じ瞬間に」スタートさせたい場合、
-環境変数 SYNC_START_AT_SEC を使った簡易バリアを用意しています。
+複数の Vehicle を「できるだけ同じ瞬間に」タイムライン開始させたい場合、
+UNIX 時刻(秒)で指定する環境変数 TIMELINE_SYNC_UNIX を使った簡易バリアがあります。
 
-VehicleMain の先頭で waitSyncStartIfConfigured() が呼ばれ、
-指定 Unix 時刻(秒)までスリープします。
+VehicleTimelineNode 内で、PublisherTimelineLoop / SubscriberTimelineLoop の
+各ループがその時刻に達するまで待機し、それから JSON タイムラインの処理を開始します。
 
 別ターミナルで、例えば 120 秒後に揃えたい場合:
 
@@ -282,53 +318,60 @@ VehicleMain の先頭で waitSyncStartIfConfigured() が呼ばれ、
 
 Publisher 側:
 
-  MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
+  export ROS_MASTER_URI=http://127.0.0.1:11311
+  export ROS_IP=127.0.0.1
+
   VEHICLE_ID=vehicle-k \
   REGION_TIMELINE_DIR="/home/tavivid/v2x-pcd/k15-44-59" \
   REGION_TIMELINE_STEP_MS=90 \
-  SYNC_START_AT_SEC=1765315118 \
-  ./gradlew --no-daemon :vehicle:run
+  TIMELINE_SYNC_UNIX=$SYNC \
+  ./gradlew --no-daemon :vehicle:runRos
 
 Subscriber 側:
 
-  MASTER_HOST=127.0.0.1 MASTER_PORT=11311 \
+  export ROS_MASTER_URI=http://127.0.0.1:11311
+  export ROS_IP=127.0.0.1
+
   VEHICLE_ID=vehicle-m \
   SUB_TIMELINE_DIR="/home/tavivid/v2x-pcd/subscription/m" \
   SUB_TIMELINE_STEP_MS=100 \
-  SYNC_START_AT_SEC=1765315118 \
-  ./gradlew --no-daemon :vehicle:run
+  TIMELINE_SYNC_UNIX=$SYNC \
+  ./gradlew --no-daemon :vehicle:runRos
 
-両者とも指定時刻まで待機し、その後に各スレッドの起動・タイムライン読みが始まります。
+両者とも指定 Unix 時刻まで待機し、その後に各タイムラインスレッドの処理が始まります。
 
 
 ========================================
-■ 8. よくあるつまずき・チェックリスト
+■ 8. よくあるつまずき・チェックリスト（rosjava 版）
 ========================================
 
-- Coordinator がすぐに落ちる / スレッド上限
-  - 古い実装では「接続ごとにスレッドを無限に増やす」部分がありましたが、
-    現在は RosPublisher/RosSubscriber が使い回し・クローズするようになっています。
-    それでも pthread_create エラーが出る場合は、
-    不要な Publisher/Subscriber が増え続けていないかログを確認してください。
+- roscore を起動していない / ROS_MASTER_URI が不正
+  - rosjava ノードは ROS master と疎通できないとトピックを publish/subscribe できません。
+  - 別ターミナルで roscore を起動し、
+    Vehicle 側で ROS_MASTER_URI / ROS_IP を正しく設定してください。
 
-- Subscriber が JSON の最初のフレームで止まる
-  - Publisher がまだ居ない時でも RegionTimelineSubscriberFeeder は
-    JSON を読み進めるようになっています。
-    古いバージョンのクラスを混在させていないか確認してください
-    （クリーンビルド推奨: `./gradlew clean build`）。
+- REGION_TIMELINE_DIR / SUB_TIMELINE_DIR が間違っている
+  - ディレクトリパスの Typo などで JSON が 1 つも見つからないと、
+    タイムラインが開始されません。
+  - `[PUB-TL] no timeline json under ...` / `[SUB-TL] no timeline json under ...`
+    といったログがないか確認してください。
 
 - 受信点群が保存されない
-  - SUB_TIMELINE_* を使わず単一リージョンモードで動かしている場合、
-    SubscriberTask の PCD 保存処理が有効になっているか確認する。
-  - recv-pcd ディレクトリに書き込み権限があるかチェック。
-
-- Publisher が起動しない
-  - datasetPath が存在しない / glob にマッチする PCD が無いケースが多いです。
-    ログに `[DATASET]` という prefix で原因が出ます。
+  - SUB_TIMELINE_* を設定しているか
+  - `/home/tavivid/v2x-pcd/received` に書き込み権限があるか
+  - Publisher 側で十分な点数（>10点）のチャンクが送られているか
+    （極小チャンクはスキップされます）
 
 - Publisher が早々に「no more data for region=...」
   - そのリージョンの PCD が読み尽くされているか、
     すべての PCD が 10点以下でスキップされている可能性があります。
+
+- ログが多すぎて見づらい
+  - rosjava の内部ログ(org.ros.internal.node.RosoutLogger など)が
+    うるさい場合は、java.util.logging の設定や VehicleTimelineNode の中で
+    Logger レベルを調整して抑制できます。
+  - VehicleTimelineNode 独自のログは `[MM:SS.mmm] [TAG] ...` 形式で
+    標準出力に出るようになっています。
 
 
 ========================================
@@ -338,8 +381,16 @@ Subscriber 側:
 - v2x-config.yml (config/v2x-config.yml, vehicle/src/main/resources/v2x-config.yml)
   - vehicleId
   - datasetPath / datasetGlob / datasetLoop
-  - udpSendPort / udpRecvPort（Publisher のベースポート等）
+  - 旧構成用のポート設定など
 
 これらは環境変数や -Dsystem.property で上書き可能です（詳細は AppConfig を参照）。
+
+rosjava / ROS1 タイムライン実験では主に以下を使います:
+
+  - VEHICLE_ID
+  - DATASET_PATH / DATASET_GLOB / DATASET_LOOP
+  - REGION_TIMELINE_* / SUB_TIMELINE_*
+  - TIMELINE_SYNC_UNIX
+  - ROS_MASTER_URI / ROS_IP
 
 以上

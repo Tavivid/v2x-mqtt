@@ -1,5 +1,8 @@
 package v2x.vehicle.ros;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import org.ros.address.InetAddressFactory;
 import org.ros.node.DefaultNodeMainExecutor;
 import org.ros.node.NodeConfiguration;
@@ -17,6 +20,10 @@ import java.net.URI;
 public class VehicleRosMain {
 
     public static void main(String[] args) throws Exception {
+        Logger.getLogger("org.ros.internal").setLevel(Level.WARNING);
+        Logger.getLogger("org.ros.internal.node.client.Registrar").setLevel(Level.WARNING);
+        Logger.getLogger("org.ros.internal.node.topic.DefaultPublisher").setLevel(Level.WARNING);
+
         // ROS Master URI を環境変数から取る
         String masterUriStr = System.getenv("ROS_MASTER_URI");
         if (masterUriStr == null || masterUriStr.isBlank()) {

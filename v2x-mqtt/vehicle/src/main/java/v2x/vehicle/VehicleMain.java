@@ -1,3 +1,4 @@
+/*
 package v2x.vehicle;
 
 import v2x.vehicle.config.AppConfig;
@@ -37,7 +38,7 @@ import java.net.InetSocketAddress;
  *
  * CSV / JSON が指定されている場合、その側はシナリオ優先で動作し、
  * PUB_REGION / SUB_REGION 単体指定はその側については無効化される。
- */
+ 
 public class VehicleMain {
     private static volatile boolean syncDone = false;
 
@@ -48,7 +49,7 @@ public class VehicleMain {
         System.out.println("[DEBUG] datasetPath=" + cfg.datasetPath
                 + " datasetGlob=" + cfg.datasetGlob
                 + " datasetLoop=" + cfg.datasetLoop);
-        */
+        
 
         String vehicleId = cfg.vehicleId;
 
@@ -341,3 +342,4 @@ public class VehicleMain {
         return String.format("%02d:%02d.%03d", min, s, ms);
     }
 }
+*/
