@@ -17,7 +17,6 @@ import v2x.vehicle.config.AppConfig;
 import v2x.vehicle.datasource.DatasetPointCloudSource;
 import v2x.vehicle.model.Point3D;
 import v2x.vehicle.model.PointCloudChunk;
-import v2x.vehicle.net.Topics;
 import v2x.vehicle.util.Jsons;
 import v2x.vehicle.util.PointCloudSerializer;
 
@@ -33,8 +32,6 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.logging.Logger;
-import java.util.logging.Level;
 
 public class VehicleTimelineNode extends AbstractNodeMain {
 
@@ -241,7 +238,7 @@ public class VehicleTimelineNode extends AbstractNodeMain {
             if (!loop && frameIndex >= frames.size()) {
                 VehicleTimelineNode.logf("PUB-TL",
                         "timeline finished. stopping publisher loop. frames=%d", frames.size());
-                this.cancel();  // ★ ここでループを終了
+                this.cancel();
                 return;
             }
 
@@ -292,24 +289,17 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                 Publisher<ByteMultiArray> pub = active.get(regionId);
                 if (pub == null) continue;
 
-                //if (!pub.hasSubscribers()) {
-                //    continue;
-                //}
+                if (!pub.hasSubscribers()) {
+                    continue;
+                }
 
                 try {
                     PointCloudChunk chunk = source.nextChunkAtFrame(
                             vehicleId, regionId, idx, maxPointsPerChunk
                     );
-                    if (chunk == null){
-                        VehicleTimelineNode.logf("PUB",
-                                "no chunk for frame=%d region=%s (chunk=null)", idx, regionId);
-                        continue;
-                    }
+                    if (chunk == null) continue;
                     int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
                     if (pointCount <= 10) {
-                        VehicleTimelineNode.logf("PUB",
-                                "skip tiny chunk frame=%d region=%s points=%d",
-                                idx, regionId, pointCount);
                         continue;
                     }
 
@@ -377,17 +367,19 @@ public class VehicleTimelineNode extends AbstractNodeMain {
             }
 
             if (frames.isEmpty()) {
-                VehicleTimelineNode.log("SUB-TL", "no timeline frames (frames.isEmpty)");
                 TimeUnit.SECONDS.sleep(1);
                 return;
             }
             if (!loop && frameIndex >= frames.size()) {
                 VehicleTimelineNode.logf("SUB-TL",
                         "timeline finished. stopping subscriber loop. frames=%d", frames.size());
-                TimeUnit.SECONDS.sleep(1);
+                this.cancel();
                 return;
             }
 
+            if (frameIndex == 0) {
+                VehicleTimelineNode.resetElapsedBase();
+            }
             int idx = frameIndex % frames.size();
             Path framePath = frames.get(idx);
             String frameName = framePath.getFileName().toString();
@@ -512,39 +504,61 @@ public class VehicleTimelineNode extends AbstractNodeMain {
     private static void saveChunkAsPcd(PointCloudChunk chunk) {
 
         List<?> pts = chunk.points();
-        if (pts == null || pts.isEmpty()) return;
+        if (pts == null || pts.isEmpty()) {
+            System.out.println("[SUB] skip saving empty chunk region=" + chunk.regionId());
+            return;
+        }
 
-        File baseDir = new File("/home/tavivid/v2x-pcd/received");
+        File baseDir = new File("/home/Tavivid/v2x-pcd/received");
+        if (!baseDir.exists() && !baseDir.mkdirs()) {
+            System.err.println("[SUB] failed to create base dir: " + baseDir.getAbsolutePath());
+            return;
+        }
+
         File regionDir = new File(baseDir, chunk.regionId());
-        regionDir.mkdirs();
+        if (!regionDir.exists() && !regionDir.mkdirs()) {
+            System.err.println("[SUB] failed to create region dir: " + regionDir.getAbsolutePath());
+            return;
+        }
 
-        String fileName = (chunk.sourceFileName() != null && !chunk.sourceFileName().isBlank())
-                ? chunk.sourceFileName()
-                : chunk.captureTsMillis() + ".pcd";
-
+        String fileName;
+        if (chunk.sourceFileName() != null && !chunk.sourceFileName().isBlank()) {
+            fileName = chunk.sourceFileName();
+        } else {
+            fileName = chunk.captureTsMillis() + ".pcd";
+        }
         File out = new File(regionDir, fileName);
         int numPoints = pts.size();
-
         try (BufferedWriter w = new BufferedWriter(
                 new OutputStreamWriter(new FileOutputStream(out), StandardCharsets.US_ASCII))) {
 
             w.write("# .PCD v0.7\n");
-            w.write("VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n");
-            w.write("WIDTH " + numPoints + "\nHEIGHT 1\n");
+            w.write("VERSION 0.7\n");
+            w.write("FIELDS x y z\n");
+            w.write("SIZE 4 4 4\n");
+            w.write("TYPE F F F\n");
+            w.write("COUNT 1 1 1\n");
+            w.write("WIDTH " + numPoints + "\n");
+            w.write("HEIGHT 1\n");
             w.write("VIEWPOINT 0 0 0 1 0 0 0\n");
-            w.write("POINTS " + numPoints + "\nDATA ascii\n");
+            w.write("POINTS " + numPoints + "\n");
+            w.write("DATA ascii\n");
 
             for (Object o : pts) {
                 if (o instanceof Point3D p) {
                     w.write(p.x() + " " + p.y() + " " + p.z());
                     w.newLine();
                 }
+                Point3D p = (Point3D) o;
+                w.write(p.x() + " " + p.y() + " " + p.z());
+                w.newLine();
             }
 
         } catch (IOException e) {
             System.err.println("[SUB] failed to save PCD file: " + out.getAbsolutePath());
             e.printStackTrace();
         }
+        System.out.println("[SUB] saved PCD file: " + out.getAbsolutePath());
     }
 
     private static volatile long baseStartTimeMs = -1L;
