@@ -5,6 +5,7 @@ import v2x.vehicle.model.PointCloudChunk;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -55,6 +56,16 @@ public class DatasetPointCloudSource implements PointCloudSource {
 
         RegionCursor(List<Path> files) {
             this.files = files;
+        }
+    }
+
+    public static final class RawPcd {
+        public final String fileName;
+        public final byte[] data;
+
+        public RawPcd(String fileName, byte[] data) {
+            this.fileName = fileName;
+            this.data = data;
         }
     }
 
@@ -195,6 +206,62 @@ public class DatasetPointCloudSource implements PointCloudSource {
         String srcFileName = file.getFileName().toString();
 
         return new PointCloudChunk(regionId, vehicleId, ts, sub, srcFileName);
+    }
+
+    public RawPcd readRawPcdWithName(String regionId, int frameIndex) throws IOException {
+        Path regionDir = datasetRoot.resolve(regionId);
+        if (!Files.isDirectory(regionDir)) {
+            System.out.println("[DATASET] readRawPcdWithName: region directory not found region=" + regionId
+                    + " dir=" + regionDir);
+            return null;
+        }
+
+        // ★フォールバックなし: 必ず %06d.pcd という名前を前提にする
+        String fileName = String.format("%06d.pcd", frameIndex);
+        Path file = regionDir.resolve(fileName);
+        if (!Files.isRegularFile(file)) {
+            System.out.println("[DATASET] readRawPcdWithName: frame file not found region=" + regionId
+                    + " frameIndex=" + frameIndex + " path=" + file);
+            return null;
+        }
+
+        byte[] bytes = Files.readAllBytes(file);
+        return new RawPcd(file.getFileName().toString(), bytes);
+    }
+
+    public byte[] readRawPcd(String regionId, int frameIndex) throws IOException {
+        Path regionDir = datasetRoot.resolve(regionId);
+        if (!Files.isDirectory(regionDir)) {
+            System.out.println("[DATASET] readRawPcd: region directory not found region=" + regionId
+                    + " dir=" + regionDir);
+            return null;
+        }
+
+        // まずは 000000.pcd のようなファイル名で直接探す（nextChunkAtFrame と同じルール）
+        String fileName = String.format("%06d.pcd", frameIndex);
+        Path file = regionDir.resolve(fileName);
+        if (Files.isRegularFile(file)) {
+            return Files.readAllBytes(file);
+        }
+
+        // 見つからなかった場合は、ディレクトリ内の .pcd をソートして idx 番目を読むフォールバック
+        try (Stream<Path> s = Files.list(regionDir)) {
+            List<Path> pcdFiles = s
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString()
+                            .toLowerCase(Locale.ROOT).endsWith(".pcd"))
+                    .sorted()
+                    .collect(Collectors.toList());
+
+            if (frameIndex < 0 || frameIndex >= pcdFiles.size()) {
+                System.out.println("[DATASET] readRawPcd: index out of range region=" + regionId
+                        + " idx=" + frameIndex + " files=" + pcdFiles.size());
+                return null;
+            }
+
+            Path chosen = pcdFiles.get(frameIndex);
+            return Files.readAllBytes(chosen);
+        }
     }
 
     // =========================================================

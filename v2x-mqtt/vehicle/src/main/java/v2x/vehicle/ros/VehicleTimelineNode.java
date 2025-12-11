@@ -26,6 +26,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.IOException;
 import java.nio.ByteOrder;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -294,26 +295,32 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                 }
 
                 try {
-                    PointCloudChunk chunk = source.nextChunkAtFrame(
-                            vehicleId, regionId, idx, maxPointsPerChunk
-                    );
-                    if (chunk == null) continue;
-                    int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
-                    if (pointCount <= 10) {
+                    // ★ファイル名＋中身を取得
+                    DatasetPointCloudSource.RawPcd rawPcd =
+                            source.readRawPcdWithName(regionId, idx);
+                    if (rawPcd == null || rawPcd.data == null) {
+                        VehicleTimelineNode.logf("PUB",
+                                "skip RAW frame=%d region=%s (no data)", idx, regionId);
                         continue;
                     }
 
-                    byte[] payload = PointCloudSerializer.serialize(vehicleId, regionId, chunk);
+                    byte[] nameBytes = rawPcd.fileName.getBytes(StandardCharsets.UTF_8);
+
+                    // [4byte: ファイル名長(int, LE)] [ファイル名UTF-8] [PCD本体]
+                    int totalLen = 4 + nameBytes.length + rawPcd.data.length;
+                    ChannelBuffer buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                    buf.writeInt(nameBytes.length);
+                    buf.writeBytes(nameBytes);
+                    buf.writeBytes(rawPcd.data);
 
                     ByteMultiArray msg = pub.newMessage();
-                    ChannelBuffer buf = ChannelBuffers.copiedBuffer(ByteOrder.LITTLE_ENDIAN, payload);
                     msg.setData(buf);
                     pub.publish(msg);
 
+                    String topic = VehicleTimelineNode.topicForRegion(regionId);
                     VehicleTimelineNode.logf("PUB",
-                            "sent frame=%d region=%s points=%d topic=%s",
-                            idx, regionId, pointCount,
-                            VehicleTimelineNode.topicForRegion(regionId));
+                            "sent RAW frame=%d region=%s file=%s bytes=%d topic=%s",
+                            idx, regionId, rawPcd.fileName, totalLen, topic);
 
                 } catch (Exception e) {
                     node.getLog().error(
@@ -429,28 +436,50 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                             node.newSubscriber(topic, ByteMultiArray._TYPE);
                     sub.addMessageListener(message -> {
                         try {
-                            int len;
                             ChannelBuffer buf = message.getData();
-                            if (buf != null) {
-                                len = buf.readableBytes();
-                            } else {
-                                len = -1;
-                            }
+                            int len = (buf != null) ? buf.readableBytes() : -1;
                             VehicleTimelineNode.logf("SUB", "raw message arrived for region=%s len=%d", r, len);
                             if (buf == null) {
                                 throw new IllegalStateException("ByteMultiArray.getData() returned null");
                             }
-                            byte[] payload = new byte[buf.readableBytes()];
-                            buf.getBytes(buf.readerIndex(), payload);
-                            PointCloudChunk chunk = PointCloudSerializer.deserialize(payload);
 
-                            int points = (chunk.points() == null ? 0 : chunk.points().size());
-                            VehicleTimelineNode.logf("SUB",
-                                    "received chunk region=%s vehicleId=%s ts=%d points=%d",
-                                    chunk.regionId(), chunk.sourceVehicleId(),
-                                    chunk.captureTsMillis(), points);
+                            // ChannelBuffer から直接ヘッダを読む（readerIndex はいじらない）
+                            if (len < 4) {
+                                throw new IllegalStateException("payload too short for header");
+                            }
 
-                            saveChunkAsPcd(chunk);
+                            ChannelBuffer dup = buf.duplicate();
+                            int headerIndex = dup.readerIndex();
+                            int nameLen = dup.getInt(headerIndex);
+                            if (nameLen < 0 || 4 + nameLen > len) {
+                                throw new IllegalStateException(
+                                        "invalid nameLen=" + nameLen + " payloadLen=" + len);
+                            }
+
+                            int nameOffset = headerIndex + 4;
+                            byte[] nameBytes = new byte[nameLen];
+                            dup.getBytes(nameOffset, nameBytes);
+                            String fileName = new String(nameBytes, StandardCharsets.UTF_8);
+
+                            int pcdOffset = nameOffset + nameLen;
+                            int pcdLen = len - (4 + nameLen);
+                            if (pcdLen <= 0) {
+                                throw new IllegalStateException("no PCD body in payload");
+                            }
+                            byte[] rawPcd = new byte[pcdLen];
+                            dup.getBytes(pcdOffset, rawPcd);
+
+                            String region = r;
+                            File base = new File("/home/Tavivid/v2x-pcd/received_raw");
+                            File outDir = new File(base, region);
+                            outDir.mkdirs();
+
+                            // ★送信元と同じファイル名で保存
+                            File out = new File(outDir, fileName);
+                            Files.write(out.toPath(), rawPcd);
+
+                            System.out.println("[SUB] saved RAW PCD: " + out.getAbsolutePath());
+
                         } catch (Exception e) {
                             node.getLog().error("[SUB] failed to handle incoming message", e);
                         }
