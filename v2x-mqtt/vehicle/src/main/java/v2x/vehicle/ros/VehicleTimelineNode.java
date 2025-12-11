@@ -107,10 +107,6 @@ public class VehicleTimelineNode extends AbstractNodeMain {
     @Override
     public void onStart(final ConnectedNode connectedNode) {
 
-        Logger.getLogger("org.ros.internal.node.RosoutLogger").setLevel(Level.OFF);
-        Logger.getLogger("org.ros.internal.node").setLevel(Level.WARNING);
-        Logger.getLogger("org.ros").setLevel(Level.WARNING);
-
         // =====================================================================
         // Publisher timeline
         // =====================================================================
@@ -215,8 +211,9 @@ public class VehicleTimelineNode extends AbstractNodeMain {
         // ★ Publisher を取得（初回のみ newPublisher）
         private Publisher<ByteMultiArray> getOrCreatePublisher(String regionId) {
             return publisherPool.computeIfAbsent(regionId, r -> {
-                String safeRegionId = r.replaceAll("[^a-zA-Z0-9_]", "_");
-                String topic = "v2x/region/" + safeRegionId + "/data";
+                String topic = VehicleTimelineNode.topicForRegion(r);
+                VehicleTimelineNode.logf("PUB-TL",
+                        "create publisher for region=%s topic=%s", r, topic);
                 node.getLog().info("[PUB-TL] create publisher for region=" + r + " topic=" + topic);
 
                 Publisher<ByteMultiArray> pub = node.newPublisher(topic, ByteMultiArray._TYPE);
@@ -295,17 +292,24 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                 Publisher<ByteMultiArray> pub = active.get(regionId);
                 if (pub == null) continue;
 
-                if (!pub.hasSubscribers()) {
-                    continue;
-                }
+                //if (!pub.hasSubscribers()) {
+                //    continue;
+                //}
 
                 try {
                     PointCloudChunk chunk = source.nextChunkAtFrame(
                             vehicleId, regionId, idx, maxPointsPerChunk
                     );
-                    if (chunk == null) continue;
-
-                    if (chunk.points() == null || chunk.points().size() <= 10) {
+                    if (chunk == null){
+                        VehicleTimelineNode.logf("PUB",
+                                "no chunk for frame=%d region=%s (chunk=null)", idx, regionId);
+                        continue;
+                    }
+                    int pointCount = (chunk.points() == null) ? 0 : chunk.points().size();
+                    if (pointCount <= 10) {
+                        VehicleTimelineNode.logf("PUB",
+                                "skip tiny chunk frame=%d region=%s points=%d",
+                                idx, regionId, pointCount);
                         continue;
                     }
 
@@ -315,6 +319,11 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                     ChannelBuffer buf = ChannelBuffers.copiedBuffer(ByteOrder.LITTLE_ENDIAN, payload);
                     msg.setData(buf);
                     pub.publish(msg);
+
+                    VehicleTimelineNode.logf("PUB",
+                            "sent frame=%d region=%s points=%d topic=%s",
+                            idx, regionId, pointCount,
+                            VehicleTimelineNode.topicForRegion(regionId));
 
                 } catch (Exception e) {
                     node.getLog().error(
@@ -368,16 +377,23 @@ public class VehicleTimelineNode extends AbstractNodeMain {
             }
 
             if (frames.isEmpty()) {
+                VehicleTimelineNode.log("SUB-TL", "no timeline frames (frames.isEmpty)");
                 TimeUnit.SECONDS.sleep(1);
                 return;
             }
             if (!loop && frameIndex >= frames.size()) {
+                VehicleTimelineNode.logf("SUB-TL",
+                        "timeline finished. stopping subscriber loop. frames=%d", frames.size());
                 TimeUnit.SECONDS.sleep(1);
                 return;
             }
 
             int idx = frameIndex % frames.size();
             Path framePath = frames.get(idx);
+            String frameName = framePath.getFileName().toString();
+
+            VehicleTimelineNode.logf("SUB-TL",
+                    "reading timeline frame=%d file=%s", idx, frameName);
 
             List<String> regionList;
             try {
@@ -388,29 +404,60 @@ public class VehicleTimelineNode extends AbstractNodeMain {
             }
 
             LinkedHashSet<String> currentRegions = new LinkedHashSet<>(regionList);
+            VehicleTimelineNode.logf("SUB-TL",
+                    "currentRegions=%s", currentRegions.toString());
 
             // stop
             Set<String> toStop = new HashSet<>(active.keySet());
             toStop.removeAll(currentRegions);
             for (String r : toStop) {
                 Subscriber<ByteMultiArray> sub = active.remove(r);
-                if (sub != null) sub.shutdown();
+                if (sub != null) {
+                    VehicleTimelineNode.logf("SUB-TL",
+                            "stop subscriber for region=%s", r);
+                    try {
+                        sub.shutdown();
+                    } catch (Exception ignore) {
+                    }
+                }
             }
 
             // start
             Set<String> toStart = new HashSet<>(currentRegions);
             toStart.removeAll(active.keySet());
+            VehicleTimelineNode.logf("SUB-TL",
+                    "toStart=%s", toStart.toString());
+
             for (String r : toStart) {
-                String topic = Topics.data(r);
+                String topic = VehicleTimelineNode.topicForRegion(r);
+                VehicleTimelineNode.logf("SUB-TL",
+                        "start subscriber for region=%s topic=%s", r, topic);
                 try {
                     Subscriber<ByteMultiArray> sub =
                             node.newSubscriber(topic, ByteMultiArray._TYPE);
                     sub.addMessageListener(message -> {
                         try {
+                            int len;
                             ChannelBuffer buf = message.getData();
+                            if (buf != null) {
+                                len = buf.readableBytes();
+                            } else {
+                                len = -1;
+                            }
+                            VehicleTimelineNode.logf("SUB", "raw message arrived for region=%s len=%d", r, len);
+                            if (buf == null) {
+                                throw new IllegalStateException("ByteMultiArray.getData() returned null");
+                            }
                             byte[] payload = new byte[buf.readableBytes()];
                             buf.getBytes(buf.readerIndex(), payload);
                             PointCloudChunk chunk = PointCloudSerializer.deserialize(payload);
+
+                            int points = (chunk.points() == null ? 0 : chunk.points().size());
+                            VehicleTimelineNode.logf("SUB",
+                                    "received chunk region=%s vehicleId=%s ts=%d points=%d",
+                                    chunk.regionId(), chunk.sourceVehicleId(),
+                                    chunk.captureTsMillis(), points);
+
                             saveChunkAsPcd(chunk);
                         } catch (Exception e) {
                             node.getLog().error("[SUB] failed to handle incoming message", e);
@@ -418,7 +465,9 @@ public class VehicleTimelineNode extends AbstractNodeMain {
                     });
                     active.put(r, sub);
                 } catch (Exception e) {
-                    node.getLog().error("[SUB-TL] failed to create subscriber for " + r, e);
+                    System.err.println("[SUB] exception while handling incoming message for region=" + r);
+                    e.printStackTrace();
+                    node.getLog().error("[SUB] failed to handle incoming message", e);
                 }
             }
 
@@ -525,6 +574,11 @@ public class VehicleTimelineNode extends AbstractNodeMain {
     private static void logf(String tag, String fmt, Object... args) {
         String body = String.format(fmt, args);
         log(tag, body);
+    }
+
+    private static String topicForRegion(String regionId) {
+        String safeRegionId = regionId.replaceAll("[^a-zA-Z0-9_]", "_");
+        return "/v2x/region/" + safeRegionId + "/data";
     }
 
 }
