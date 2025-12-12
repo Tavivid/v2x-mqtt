@@ -82,7 +82,7 @@ rosjava 版では、独自の Coordinator / MasterServer は使わず、
 
 別ターミナルで roscore を起動しておきます:
 
-  roscore
+  docker run --rm -it --network host ros:noetic roscore
 
 その上で、Vehicle 側では例えば以下のように環境変数を設定します:
 
@@ -322,9 +322,9 @@ Publisher 側:
   export ROS_IP=127.0.0.1
 
   VEHICLE_ID=vehicle-k \
-  REGION_TIMELINE_DIR="/home/Tavivid/v2x-pcd/k15-44-59" \
+  REGION_TIMELINE_DIR="/home/tavivid/v2x-pcd/k15-44-59" \
   REGION_TIMELINE_STEP_MS=100 \
-  TIMELINE_SYNC_UNIX=1765424786 \
+  TIMELINE_SYNC_UNIX=$SYNC \
   ./gradlew --no-daemon :vehicle:runRos
 
 Subscriber 側:
@@ -333,9 +333,9 @@ Subscriber 側:
   export ROS_IP=127.0.0.1
 
   VEHICLE_ID=vehicle-m \
-  SUB_TIMELINE_DIR="/home/Tavivid/v2x-pcd/subscription/m" \
+  SUB_TIMELINE_DIR="/home/tavivid/v2x-pcd/subscription/m" \
   SUB_TIMELINE_STEP_MS=100 \
-  TIMELINE_SYNC_UNIX=1765424786 \
+  TIMELINE_SYNC_UNIX=$SYNC \
   ./gradlew --no-daemon :vehicle:runRos
 
 両者とも指定 Unix 時刻まで待機し、その後に各タイムラインスレッドの処理が始まります。
