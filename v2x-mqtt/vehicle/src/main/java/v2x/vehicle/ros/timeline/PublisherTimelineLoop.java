@@ -56,7 +56,6 @@ public final class PublisherTimelineLoop extends CancellableLoop {
         return publisherPool.computeIfAbsent(regionId, r -> {
             String topic = TimelineTopics.topicForRegion(r);
             TimelineLog.logf("PUB-TL", "create publisher for region=%s topic=%s", r, topic);
-            node.getLog().info("[PUB-TL] create publisher for region=" + r + " topic=" + topic);
             return node.newPublisher(topic, ByteMultiArray._TYPE);
         });
     }
@@ -83,10 +82,6 @@ public final class PublisherTimelineLoop extends CancellableLoop {
             return;
         }
 
-        if (frameIndex == 0) {
-            TimelineLog.resetElapsedBase();
-        }
-
         int idx = frameIndex % frames.size();
         Path framePath = frames.get(idx);
         String frameName = framePath.getFileName().toString();
@@ -96,7 +91,7 @@ public final class PublisherTimelineLoop extends CancellableLoop {
         try {
             regionList = TimelineFiles.readRegionsFromJson(framePath);
         } catch (Exception e) {
-            node.getLog().error("[PUB-TL] failed to read timeline json: " + framePath, e);
+            TimelineLog.error("PUB-TL", "failed to read timeline json: " + framePath, e);
             regionList = List.of();
         }
 
@@ -148,11 +143,11 @@ public final class PublisherTimelineLoop extends CancellableLoop {
 
                 String topic = TimelineTopics.topicForRegion(regionId);
                 TimelineLog.logf("PUB",
-                        "sent RAW frame=%d region=%s file=%s bytes=%d topic=%s",
+                        "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s",
                         idx, regionId, rawPcd.fileName, totalLen, topic);
 
             } catch (Exception e) {
-                node.getLog().error("[PUB] error while sending frame=" + idx + " region=" + regionId, e);
+                TimelineLog.error("PUB", "error while sending frame=" + idx + " region=" + regionId, e);
             }
         }
 

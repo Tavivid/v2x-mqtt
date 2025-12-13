@@ -60,10 +60,6 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
             return;
         }
 
-        if (frameIndex == 0) {
-            TimelineLog.resetElapsedBase();
-        }
-
         int idx = frameIndex % frames.size();
         Path framePath = frames.get(idx);
         String frameName = framePath.getFileName().toString();
@@ -73,7 +69,8 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
         try {
             regionList = TimelineFiles.readRegionsFromJson(framePath);
         } catch (Exception e) {
-            node.getLog().error("[SUB-TL] failed to read timeline json: " + framePath, e);
+            TimelineLog.error("SUB-TL", "failed to read timeline json: " + framePath, e);
+            
             regionList = List.of();
         }
 
@@ -143,16 +140,16 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
                         TimelineLog.logf("SUB", "saved PCD: " + out.getAbsolutePath());
 
                     } catch (Exception e) {
-                        node.getLog().error("[SUB] failed to handle incoming message", e);
+                        TimelineLog.error("SUB", "failed to handle incoming message", e);
                     }
                 });
 
                 active.put(r, sub);
 
             } catch (Exception e) {
-                System.err.println("[SUB] exception while handling incoming message for region=" + r);
+                TimelineLog.error("SUB", "exception while handling incoming message for region=" + r, e);
                 e.printStackTrace();
-                node.getLog().error("[SUB] failed to handle incoming message", e);
+                TimelineLog.error("SUB", "failed to handle incoming message", e);
             }
         }
 
