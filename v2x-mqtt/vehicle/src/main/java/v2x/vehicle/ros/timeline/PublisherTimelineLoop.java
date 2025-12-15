@@ -128,11 +128,13 @@ public final class PublisherTimelineLoop extends CancellableLoop {
                     continue;
                 }
 
+                long sendNano = System.nanoTime();
                 byte[] nameBytes = rawPcd.fileName.getBytes(StandardCharsets.UTF_8);
 
                 // [4byte: ファイル名長(int, LE)] [ファイル名UTF-8] [PCD本体]
-                int totalLen = 4 + nameBytes.length + rawPcd.data.length;
+                int totalLen = 8 + 4 + nameBytes.length + rawPcd.data.length;
                 ChannelBuffer buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                buf.writeLong(sendNano);
                 buf.writeInt(nameBytes.length);
                 buf.writeBytes(nameBytes);
                 buf.writeBytes(rawPcd.data);
@@ -143,8 +145,8 @@ public final class PublisherTimelineLoop extends CancellableLoop {
 
                 String topic = TimelineTopics.topicForRegion(regionId);
                 TimelineLog.logf("PUB",
-                        "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s",
-                        idx, regionId, rawPcd.fileName, totalLen, topic);
+                        "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d",
+                        idx, regionId, rawPcd.fileName, totalLen, topic, sendNano);
 
             } catch (Exception e) {
                 TimelineLog.error("PUB", "error while sending frame=" + idx + " region=" + regionId, e);

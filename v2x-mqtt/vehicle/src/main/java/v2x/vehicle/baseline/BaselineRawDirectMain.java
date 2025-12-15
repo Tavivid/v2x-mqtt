@@ -68,13 +68,15 @@ public final class BaselineRawDirectMain {
       receiver = new DirectTcpReceiver(listenPort, payload -> {
         try {
           // payload: [4byte nameLen LE][name utf8][pcd bytes]
-          if (payload.length < 4) throw new IllegalStateException("payload too short");
-          int nameLen = getIntLE(payload, 0);
-          if (nameLen < 0 || 4 + nameLen > payload.length) {
+          if (payload.length < 12) throw new IllegalStateException("payload too short");
+          long recvNano = System.nanoTime();
+          long sendNano = getLongLE(payload, 0);
+          int nameLen = getIntLE(payload, 8);
+          if (nameLen < 0 || 12 + nameLen > payload.length) {
             throw new IllegalStateException("invalid nameLen=" + nameLen + " payloadLen=" + payload.length);
           }
-          String fileName = new String(payload, 4, nameLen, StandardCharsets.UTF_8);
-          int pcdOff = 4 + nameLen;
+          String fileName = new String(payload, 12, nameLen, StandardCharsets.UTF_8);
+          int pcdOff = 12 + nameLen;
           int pcdLen = payload.length - pcdOff;
 
           File outBase = new File(recvDir);
@@ -82,7 +84,13 @@ public final class BaselineRawDirectMain {
           File out = new File(outBase, fileName);
           Files.write(out.toPath(), slice(payload, pcdOff, pcdLen));
 
-          System.out.println("[BASE-SUB] saved PCD: " + out.getAbsolutePath() + " bytes=" + pcdLen);
+          long latencyNs = recvNano - sendNano;
+          double latencyMs = latencyNs / 1_000_000.0;
+
+          System.out.println(String.format(
+              "[BASE-SUB] saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
+              out.getAbsolutePath(), pcdLen, latencyNs, latencyMs, sendNano, recvNano
+          ));
         } catch (Exception e) {
           System.err.println("[BASE-SUB] failed: " + e.getMessage());
         }
@@ -124,10 +132,14 @@ public final class BaselineRawDirectMain {
             continue;
           }
 
-          byte[] payload = packNameAndBodyLE(raw.fileName, raw.data);
+          long sendNano = System.nanoTime();
+          byte[] payload = packNanoNameAndBodyLE(sendNano, raw.fileName, raw.data);
           sender.send(payload);
 
-          System.out.println("[BASE-PUB] sent RAW frame=" + idx + " file=" + raw.fileName + " bytes=" + payload.length
+          System.out.println("[BASE-PUB] sent RAW frame=" + idx
+              + " file=" + raw.fileName
+              + " bytes=" + payload.length
+              + " sendNano=" + sendNano
               + " dst=" + dstHost + ":" + dstPort);
 
           TimeUnit.MILLISECONDS.sleep(stepMs);
@@ -177,6 +189,17 @@ public final class BaselineRawDirectMain {
         | ((a[off + 3] & 0xff) << 24);
   }
 
+  private static long getLongLE(byte[] a, int off) {
+   return ((long) (a[off] & 0xff))
+        | ((long) (a[off + 1] & 0xff) << 8)
+        | ((long) (a[off + 2] & 0xff) << 16)
+        | ((long) (a[off + 3] & 0xff) << 24)
+        | ((long) (a[off + 4] & 0xff) << 32)
+        | ((long) (a[off + 5] & 0xff) << 40)
+        | ((long) (a[off + 6] & 0xff) << 48)
+        | ((long) (a[off + 7] & 0xff) << 56);
+  }
+
   private static byte[] slice(byte[] a, int off, int len) {
     byte[] b = new byte[len];
     System.arraycopy(a, off, b, 0, len);
@@ -200,4 +223,34 @@ public final class BaselineRawDirectMain {
     System.arraycopy(body, 0, out, 4 + nameBytes.length, body.length);
     return out;
   }
+
+  private static byte[] packNanoNameAndBodyLE(long sendNano, String fileName, byte[] body) {
+    byte[] nameBytes = fileName.getBytes(StandardCharsets.UTF_8);
+
+    // [8byte sendNano LE][4byte nameLen LE][name][body]
+    int total = 8 + 4 + nameBytes.length + body.length;
+    byte[] out = new byte[total];
+
+    // sendNano
+    out[0] = (byte) (sendNano);
+    out[1] = (byte) (sendNano >>> 8);
+    out[2] = (byte) (sendNano >>> 16);
+    out[3] = (byte) (sendNano >>> 24);
+    out[4] = (byte) (sendNano >>> 32);
+    out[5] = (byte) (sendNano >>> 40);
+    out[6] = (byte) (sendNano >>> 48);
+    out[7] = (byte) (sendNano >>> 56);
+
+    // nameLen
+    int n = nameBytes.length;
+    out[8]  = (byte) (n);
+    out[9]  = (byte) (n >>> 8);
+    out[10] = (byte) (n >>> 16);
+    out[11] = (byte) (n >>> 24);
+
+    System.arraycopy(nameBytes, 0, out, 12, nameBytes.length);
+    System.arraycopy(body, 0, out, 12 + nameBytes.length, body.length);
+    return out;
+  }
+
 }
