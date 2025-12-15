@@ -14,6 +14,20 @@ tasks.register('runRos', JavaExec) {
     mainClass = 'v2x.vehicle.ros.VehicleRosMain'
 }
 
+tasks.register('runBaseline', JavaExec) {
+    group = 'application'
+    description = 'Run baseline RAW direct TCP (no roscore)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'v2x.vehicle.baseline.BaselineRawDirectMain'
+}
+
+tasks.register('runMqttRelay', JavaExec) {
+    group = 'application'
+    description = 'Run MQTT relay (no roscore)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'v2x.vehicle.mqtt.MqttRelayMain'
+}
+
 configurations {
     all*.exclude group: 'org.apache.commons', module: 'com.springsource.org.apache.commons.httpclient'
     all*.exclude group: 'org.apache.commons', module: 'com.springsource.org.apache.commons.codec'
