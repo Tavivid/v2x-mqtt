@@ -148,10 +148,10 @@ public final class PublisherTimelineLoop extends CancellableLoop {
                 final ChannelBuffer buf;
 
                 if (rawOnly) {
-                    long startNano = System.nanoTime();
+                    long sendNano = System.nanoTime();
 
-                    int totalLen = rawPcd.data.length;
-                    ChannelBuffer buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                    totalLen = rawPcd.data.length;
+                    buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
                     buf.writeBytes(rawPcd.data);
 
                     ByteMultiArray msg = pub.newMessage();
@@ -160,7 +160,7 @@ public final class PublisherTimelineLoop extends CancellableLoop {
 
                     int hash = crc32c(rawPcd.data);
 
-                    LAT_STORE.putSendNanoByHash(regionId, hash, startNano);
+                    LAT_STORE.putSendNanoByHash(regionId, hash, sendNano);
 
                     String topic = TimelineTopics.topicForRegion(regionId);
                     TimelineLog.logf("PUB",
