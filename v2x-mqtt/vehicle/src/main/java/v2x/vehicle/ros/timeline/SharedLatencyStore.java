@@ -12,21 +12,25 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 共有メモリ(=mmap)で sendNano を渡すための簡易ストア。
+ * 共有メモリ(mmap)で sendNano を渡すストア（hashキー版）
  *
- * - region ごとに別ファイル（衝突を避けて実装を単純化） - seq (int) をキーとして sendNano (long) をリングに格納 -
- * 受信側は同じ region/seq のスロットから sendNano を読む
+ * - regionごとに別ファイル
+ * - key = CRC32C(rawPcdBytes)（int）
+ * - slot = key % ringSize
+ * - スロットには [hash(int)][pad(int)][sendNano(long)] を保存
  *
- * 注意: - 同一ホストの複数プロセスで使う前提 - ファイルは /tmp に作る（環境変数で変更可）
+ * 注意:
+ * - CRC32C は衝突可能（ただし実運用では十分低い想定）
+ * - 衝突/上書きが起きた場合は get が null になるか、別データの時刻を拾う可能性がある
+ *   → まずは軽量性優先で length は入れない（要望通り）
  */
 public final class SharedLatencyStore implements Closeable {
 
-    // 環境変数
-    private static final String DIR_ENV = "V2X_LAT_SHM_DIR";      // 例: /dev/shm
-    private static final String RING_ENV = "V2X_LAT_RING_SIZE";   // 例: 131072 (2^n推奨)
+    private static final String DIR_ENV = "V2X_LAT_SHM_DIR";     // 例: /dev/shm
+    private static final String RING_ENV = "V2X_LAT_RING_SIZE";  // 例: 131072
 
-    private static final int DEFAULT_RING_SIZE = 1 << 17; // 131072 slots
-    private static final int SLOT_BYTES = 16; // [seq:int][pad:int][sendNano:long]
+    private static final int DEFAULT_RING_SIZE = 1 << 17; // 131072
+    private static final int SLOT_BYTES = 16; // [hash:int][pad:int][sendNano:long]
 
     private final Path baseDir;
     private final int ringSize;
@@ -46,9 +50,7 @@ public final class SharedLatencyStore implements Closeable {
 
     private static int parseIntEnv(String key, int def) {
         String v = System.getenv(key);
-        if (v == null || v.isBlank()) {
-            return def;
-        }
+        if (v == null || v.isBlank()) return def;
         try {
             return Integer.parseInt(v.trim());
         } catch (NumberFormatException e) {
@@ -57,14 +59,11 @@ public final class SharedLatencyStore implements Closeable {
     }
 
     private static String sanitizeRegion(String regionId) {
-        // ファイル名に使える程度に安全化
-        // cell-083e -> cell-083e のまま、その他は '_' に
         return regionId.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
     private Path filePathForRegion(String regionId) {
         String safe = sanitizeRegion(regionId);
-        // 例: /tmp/v2x_lat_cell-083e.bin
         return baseDir.resolve(String.format(Locale.ROOT, "v2x_lat_%s.bin", safe));
     }
 
@@ -80,7 +79,6 @@ public final class SharedLatencyStore implements Closeable {
                         StandardOpenOption.READ,
                         StandardOpenOption.WRITE
                 );
-                // ファイルサイズを確保
                 if (ch.size() < sizeBytes) {
                     ch.position(sizeBytes - 1);
                     ch.write(ByteBuffer.wrap(new byte[]{0}));
@@ -97,50 +95,41 @@ public final class SharedLatencyStore implements Closeable {
         });
     }
 
-    private int slotIndex(int seq) {
-        // ringSize は 2^n 推奨だが、そうでなくても動く
-        int m = seq % ringSize;
+    private int slotIndexByHash(int hash) {
+        // 負数対策
+        int h = hash & 0x7fffffff;
+        int m = h % ringSize;
         return (m < 0) ? (m + ringSize) : m;
     }
 
-    private int slotOffsetBytes(int slotIdx) {
+    private static int slotOffsetBytes(int slotIdx) {
         return slotIdx * SLOT_BYTES;
     }
 
-    /**
-     * Publisher側：region, seq に対して sendNano を記録。
-     */
-    public void putSendNano(String regionId, int seq, long sendNano) {
+    /** Publisher側：region + hash に対して sendNano を記録 */
+    public void putSendNanoByHash(String regionId, int hash, long sendNano) {
         RegionFile rf = openRegion(regionId);
-        int slot = slotIndex(seq);
+        int slot = slotIndexByHash(hash);
         int off = slotOffsetBytes(slot);
 
-        // スロット構造:
-        // [0..3] seq(int)
-        // [4..7] pad/int (未使用, 0)
-        // [8..15] sendNano(long)
-        // 書き順: sendNano -> seq （読み側が seq を確認して整合を取るため）
+        // 書き順：sendNano -> hash（読み側が hash を見て整合チェック）
         rf.mm.putLong(off + 8, sendNano);
         rf.mm.putInt(off + 4, 0);
-        rf.mm.putInt(off + 0, seq);
+        rf.mm.putInt(off + 0, hash);
     }
 
-    /**
-     * Subscriber側：region, seq の sendNano を読む。 見つからない/上書き/未到達の場合は null。
-     */
-    public Long getSendNano(String regionId, int seq) {
+    /** Subscriber側：region + hash の sendNano を読む。見つからない/上書きなら null */
+    public Long getSendNanoByHash(String regionId, int hash) {
         RegionFile rf = openRegion(regionId);
-        int slot = slotIndex(seq);
+        int slot = slotIndexByHash(hash);
         int off = slotOffsetBytes(slot);
 
-        int storedSeq = rf.mm.getInt(off + 0);
-        if (storedSeq != seq) {
-            return null; // まだ書かれてない or 上書き済み
+        int storedHash = rf.mm.getInt(off + 0);
+        if (storedHash != hash) {
+            return null;
         }
         long sendNano = rf.mm.getLong(off + 8);
         if (sendNano == 0L) {
-            // 0 は初期状態にもなり得るので、storedSeq一致が優先条件
-            // ここは好みだが、0なら「未記録扱い」にしておく
             return null;
         }
         return sendNano;
@@ -148,18 +137,15 @@ public final class SharedLatencyStore implements Closeable {
 
     @Override
     public void close() {
-        // MappedByteBuffer は明示 close 不可。FileChannel だけ閉じる。
         for (RegionFile rf : regionFiles.values()) {
             try {
                 rf.ch.close();
-            } catch (IOException ignore) {
-            }
+            } catch (IOException ignore) {}
         }
         regionFiles.clear();
     }
 
     private static final class RegionFile {
-
         final FileChannel ch;
         final MappedByteBuffer mm;
 

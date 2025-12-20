@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.CRC32C;
 
 public final class PublisherTimelineLoop extends CancellableLoop {
 
@@ -147,28 +148,24 @@ public final class PublisherTimelineLoop extends CancellableLoop {
                 final ChannelBuffer buf;
 
                 if (rawOnly) {
-                    // ★RAW_ONLY: PCD本体だけ送る
-                    int seq;
-                    synchronized (rawOnlySeqByRegion) {
-                        seq = rawOnlySeqByRegion.getOrDefault(regionId, 0);
-                        rawOnlySeqByRegion.put(regionId, seq + 1);
-                    }
+                    long startNano = System.nanoTime();
 
-                    long sendNano = System.nanoTime();
-                    LAT_STORE.putSendNano(regionId, seq, sendNano);
-
-                    totalLen = rawPcd.data.length;
-                    buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                    int totalLen = rawPcd.data.length;
+                    ChannelBuffer buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
                     buf.writeBytes(rawPcd.data);
 
                     ByteMultiArray msg = pub.newMessage();
                     msg.setData(buf);
                     pub.publish(msg);
 
+                    int hash = crc32c(rawPcd.data);
+
+                    LAT_STORE.putSendNanoByHash(regionId, hash, startNano);
+
                     String topic = TimelineTopics.topicForRegion(regionId);
                     TimelineLog.logf("PUB",
-                            "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d seq=%d",
-                            idx, regionId, rawPcd.fileName, totalLen, topic, sendNano, seq);
+                            "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d",
+                            idx, regionId, rawPcd.fileName, totalLen, topic, sendNano);
 
                     continue;
                 } else {
@@ -207,5 +204,11 @@ public final class PublisherTimelineLoop extends CancellableLoop {
 
         Thread.sleep(stepMs);
         frameIndex++;
+    }
+
+    private static int crc32c(byte[] data) {
+        CRC32C c = new CRC32C();
+        c.update(data, 0, data.length);
+        return (int) c.getValue();
     }
 }
