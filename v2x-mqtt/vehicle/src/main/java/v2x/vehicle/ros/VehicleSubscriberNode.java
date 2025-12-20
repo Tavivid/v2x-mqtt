@@ -25,8 +25,8 @@ import java.util.List;
 /**
  * 本物の ROS1 + rosjava 版の Vehicle Subscriber ノード。
  *
- * topic: v2x/region/<regionId>/data (std_msgs/ByteMultiArray)
- *   -> PointCloudChunk に復元してログ＆PCD保存。
+ * topic: v2x/region/<regionId>/data (std_msgs/ByteMultiArray) ->
+ * PointCloudChunk に復元してログ＆PCD保存。
  */
 public class VehicleSubscriberNode extends AbstractNodeMain {
 
@@ -46,8 +46,8 @@ public class VehicleSubscriberNode extends AbstractNodeMain {
         String safeRegionId = regionId.replaceAll("[^a-zA-Z0-9_]", "_");
         String topic = "v2x/region/" + safeRegionId + "/data";
 
-        Subscriber<ByteMultiArray> sub =
-                connectedNode.newSubscriber(topic, ByteMultiArray._TYPE);
+        Subscriber<ByteMultiArray> sub
+                = connectedNode.newSubscriber(topic, ByteMultiArray._TYPE);
 
         System.out.println(
                 String.format("VehicleSubscriberNode started region=%s topic=%s",
@@ -88,7 +88,7 @@ public class VehicleSubscriberNode extends AbstractNodeMain {
      * 旧 SubscriberTask.saveChunkAsPcd() をほぼそのままコピー。
      */
     private static void saveChunkAsPcd(PointCloudChunk chunk,
-                                       ConnectedNode connectedNode) {
+            ConnectedNode connectedNode) {
         List<?> pts = chunk.points();
         if (pts == null || pts.isEmpty()) {
             System.out.println(

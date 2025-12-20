@@ -23,7 +23,7 @@ import v2x.vehicle.util.PointCloudSerializer;
  *
  * 旧 PublisherTask とほぼ同じ処理を rosjava の CancellableLoop 上で行う。
  *
- * topic: v2x/region/<regionId>/data  (std_msgs/ByteMultiArray)
+ * topic: v2x/region/<regionId>/data (std_msgs/ByteMultiArray)
  */
 public class VehiclePublisherNode extends AbstractNodeMain {
 
@@ -33,8 +33,8 @@ public class VehiclePublisherNode extends AbstractNodeMain {
     private final PointCloudSource source;
 
     public VehiclePublisherNode(AppConfig cfg,
-                                PointCloudSource source,
-                                String regionId) {
+            PointCloudSource source,
+            String regionId) {
         this.cfg = cfg;
         this.vehicleId = cfg.vehicleId;
         this.regionId = regionId;
@@ -52,8 +52,8 @@ public class VehiclePublisherNode extends AbstractNodeMain {
         final double publishRateHz = cfg.publishRateHz;
         final int maxPointsPerChunk = cfg.maxPointsPerChunk;
 
-        final Publisher<ByteMultiArray> publisher =
-                connectedNode.newPublisher(
+        final Publisher<ByteMultiArray> publisher
+                = connectedNode.newPublisher(
                         "v2x/region/" + regionId + "/data",
                         ByteMultiArray._TYPE
                 );
@@ -81,8 +81,8 @@ public class VehiclePublisherNode extends AbstractNodeMain {
                         return;
                     }
 
-                    PointCloudChunk chunk =
-                            source.nextChunk(vehicleId, regionId, maxPointsPerChunk);
+                    PointCloudChunk chunk
+                            = source.nextChunk(vehicleId, regionId, maxPointsPerChunk);
 
                     if (chunk == null) {
                         // データ枯渇
@@ -90,8 +90,8 @@ public class VehiclePublisherNode extends AbstractNodeMain {
                         return;
                     }
 
-                    byte[] payload =
-                            PointCloudSerializer.serialize(vehicleId, regionId, chunk);
+                    byte[] payload
+                            = PointCloudSerializer.serialize(vehicleId, regionId, chunk);
 
                     ByteMultiArray msg = publisher.newMessage();
                     ChannelBuffer buf = ChannelBuffers.copiedBuffer(ByteOrder.LITTLE_ENDIAN, payload);

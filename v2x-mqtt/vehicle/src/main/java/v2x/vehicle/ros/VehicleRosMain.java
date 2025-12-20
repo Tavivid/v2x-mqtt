@@ -13,9 +13,8 @@ import java.net.URI;
 /**
  * VehicleTimelineNode を起動するだけのエントリポイント。
  *
- * 使う環境変数:
- *   ROS_MASTER_URI      : 例) http://127.0.0.1:11311
- *   ROS_IP / ROS_HOSTNAME: このノード自身のIP (省略時は自動推定を試みる)
+ * 使う環境変数: ROS_MASTER_URI : 例) http://127.0.0.1:11311 ROS_IP / ROS_HOSTNAME:
+ * このノード自身のIP (省略時は自動推定を試みる)
  */
 public class VehicleRosMain {
 

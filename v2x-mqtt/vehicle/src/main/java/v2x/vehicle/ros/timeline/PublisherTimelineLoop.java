@@ -30,6 +30,17 @@ public final class PublisherTimelineLoop extends CancellableLoop {
     private int frameIndex = 0;
     private final long syncUnixSec;
 
+    // ★追加: 共有メモリで sendNano を渡す
+    private static final SharedLatencyStore LAT_STORE = new SharedLatencyStore();
+
+    // ★RAW_ONLY時の送信seq（regionごと）
+    private final Map<String, Integer> rawOnlySeqByRegion = new HashMap<>();
+
+    // ★追加: 送信payloadのモード（RAW_ONLYならPCD本体だけ）
+    private static final String PCD_PAYLOAD_MODE
+            = System.getenv().getOrDefault("PCD_PAYLOAD_MODE", "NAMED_WITH_SENDNANO");
+    private final boolean rawOnly = "RAW_ONLY".equalsIgnoreCase(PCD_PAYLOAD_MODE);
+
     public PublisherTimelineLoop(
             ConnectedNode node,
             DatasetPointCloudSource source,
@@ -117,8 +128,12 @@ public final class PublisherTimelineLoop extends CancellableLoop {
         // publish
         for (String regionId : currentRegions) {
             Publisher<ByteMultiArray> pub = active.get(regionId);
-            if (pub == null) continue;
-            if (!pub.hasSubscribers()) continue;
+            if (pub == null) {
+                continue;
+            }
+            if (!pub.hasSubscribers()) {
+                continue;
+            }
 
             try {
                 // ★ファイル名＋中身を取得（あなたの現行仕様）
@@ -128,25 +143,62 @@ public final class PublisherTimelineLoop extends CancellableLoop {
                     continue;
                 }
 
-                long sendNano = System.nanoTime();
-                byte[] nameBytes = rawPcd.fileName.getBytes(StandardCharsets.UTF_8);
+                final int totalLen;
+                final ChannelBuffer buf;
 
-                // [4byte: ファイル名長(int, LE)] [ファイル名UTF-8] [PCD本体]
-                int totalLen = 8 + 4 + nameBytes.length + rawPcd.data.length;
-                ChannelBuffer buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
-                buf.writeLong(sendNano);
-                buf.writeInt(nameBytes.length);
-                buf.writeBytes(nameBytes);
-                buf.writeBytes(rawPcd.data);
+                if (rawOnly) {
+                    // ★RAW_ONLY: PCD本体だけ送る
+                    int seq;
+                    synchronized (rawOnlySeqByRegion) {
+                        seq = rawOnlySeqByRegion.getOrDefault(regionId, 0);
+                        rawOnlySeqByRegion.put(regionId, seq + 1);
+                    }
 
-                ByteMultiArray msg = pub.newMessage();
-                msg.setData(buf);
-                pub.publish(msg);
+                    long sendNano = System.nanoTime();
+                    LAT_STORE.putSendNano(regionId, seq, sendNano);
 
-                String topic = TimelineTopics.topicForRegion(regionId);
-                TimelineLog.logf("PUB",
-                        "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d",
-                        idx, regionId, rawPcd.fileName, totalLen, topic, sendNano);
+                    totalLen = rawPcd.data.length;
+                    buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                    buf.writeBytes(rawPcd.data);
+
+                    ByteMultiArray msg = pub.newMessage();
+                    msg.setData(buf);
+                    pub.publish(msg);
+
+                    String topic = TimelineTopics.topicForRegion(regionId);
+                    TimelineLog.logf("PUB",
+                            "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d seq=%d",
+                            idx, regionId, rawPcd.fileName, totalLen, topic, sendNano, seq);
+
+                    continue;
+                } else {
+                    // ★従来: [8:sendNano][4:nameLen][name][pcd]
+                    long sendNano = System.nanoTime();
+                    byte[] nameBytes = rawPcd.fileName.getBytes(StandardCharsets.UTF_8);
+
+                    totalLen = 8 + 4 + nameBytes.length + rawPcd.data.length;
+                    buf = ChannelBuffers.buffer(ByteOrder.LITTLE_ENDIAN, totalLen);
+                    buf.writeLong(sendNano);
+                    buf.writeInt(nameBytes.length);
+                    buf.writeBytes(nameBytes);
+                    buf.writeBytes(rawPcd.data);
+
+                    ByteMultiArray msg = pub.newMessage();
+                    msg.setData(buf);
+                    pub.publish(msg);
+
+                    String topic = TimelineTopics.topicForRegion(regionId);
+                    TimelineLog.logf("PUB",
+                            "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s sendNano=%d",
+                            idx, regionId, rawPcd.fileName, totalLen, topic, sendNano);
+                }
+
+                if (rawOnly) {
+                    String topic = TimelineTopics.topicForRegion(regionId);
+                    TimelineLog.logf("PUB",
+                            "sent PCD frame=%d region=%s file=%s bytes=%d topic=%s",
+                            idx, regionId, rawPcd.fileName, totalLen, topic);
+                }
 
             } catch (Exception e) {
                 TimelineLog.error("PUB", "error while sending frame=" + idx + " region=" + regionId, e);

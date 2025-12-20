@@ -10,17 +10,16 @@ import java.util.List;
  *
  * プロトコル:
  *
- *   REGISTER_PUB <topic> <host> <port>
- *   UNREGISTER_PUB <topic> <host> <port>
- *   LOOKUP_PUBS <topic>
+ * REGISTER_PUB <topic> <host> <port>
+ * UNREGISTER_PUB <topic> <host> <port>
+ * LOOKUP_PUBS <topic>
  *
- * レスポンス:
- *   OK
- *   ENDPOINTS host1:port1,host2:port2,...
+ * レスポンス: OK ENDPOINTS host1:port1,host2:port2,...
  */
 public class MasterClient {
 
     public static final class Endpoint {
+
         public final String host;
         public final int port;
 
@@ -44,7 +43,9 @@ public class MasterClient {
 
         @Override
         public boolean equals(Object o) {
-            if (!(o instanceof Endpoint)) return false;
+            if (!(o instanceof Endpoint)) {
+                return false;
+            }
             Endpoint other = (Endpoint) o;
             return this.host.equals(other.host) && this.port == other.port;
         }
@@ -100,9 +101,7 @@ public class MasterClient {
     }
 
     private String sendCommand(String cmd) throws IOException {
-        try (Socket sock = new Socket(host, port);
-             BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream()));
-             PrintWriter out = new PrintWriter(new OutputStreamWriter(sock.getOutputStream()), true)) {
+        try (Socket sock = new Socket(host, port); BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream())); PrintWriter out = new PrintWriter(new OutputStreamWriter(sock.getOutputStream()), true)) {
 
             out.println(cmd);
             String resp = in.readLine();

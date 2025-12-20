@@ -10,8 +10,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * ROS1 の TCPROS Publisher をイメージした簡易実装。
  *
- * - publish() されたメッセージを、接続中の Subscriber 全員に配信する
- * - 起動時に MasterServer に REGISTER_PUB する
+ * - publish() されたメッセージを、接続中の Subscriber 全員に配信する - 起動時に MasterServer に
+ * REGISTER_PUB する
  */
 public class RosPublisher implements AutoCloseable {
 
@@ -38,7 +38,9 @@ public class RosPublisher implements AutoCloseable {
     }
 
     public synchronized void start() throws IOException {
-        if (running) return;
+        if (running) {
+            return;
+        }
         running = true;
 
         // Master への登録
@@ -87,10 +89,12 @@ public class RosPublisher implements AutoCloseable {
     }
 
     public void publish(byte[] payload) {
-        if (!running) return;
+        if (!running) {
+            return;
+        }
         int len = payload.length;
 
-        for (Iterator<DataOutputStream> it = clients.iterator(); it.hasNext(); ) {
+        for (Iterator<DataOutputStream> it = clients.iterator(); it.hasNext();) {
             DataOutputStream out = it.next();
             try {
                 out.writeInt(len);
