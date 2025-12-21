@@ -29,6 +29,7 @@ public final class SharedLatencyStore implements Closeable {
     private static final String DIR_ENV = "V2X_LAT_SHM_DIR";     // 例: /dev/shm
     private static final String RING_ENV = "V2X_LAT_RING_SIZE";  // 例: 131072
 
+    private static final String DEFAULT_DIR = "/dev/shm";
     private static final int DEFAULT_RING_SIZE = 1 << 17; // 131072
     private static final int SLOT_BYTES = 16; // [hash:int][pad:int][sendNano:long]
 
@@ -38,14 +39,26 @@ public final class SharedLatencyStore implements Closeable {
     private final Map<String, RegionFile> regionFiles = new ConcurrentHashMap<>();
 
     public SharedLatencyStore() {
-        String dir = System.getenv().getOrDefault(DIR_ENV, "/tmp");
-        this.baseDir = Paths.get(dir);
-        this.ringSize = parseIntEnv(RING_ENV, DEFAULT_RING_SIZE);
+        // ★ 未設定なら /dev/shm を使う。ダメなら /tmp にフォールバック。
+        String dirEnv = System.getenv(DIR_ENV);
+        String dir = (dirEnv == null || dirEnv.isBlank()) ? DEFAULT_DIR : dirEnv.trim();
+
+        Path dirPath = Paths.get(dir);
         try {
-            Files.createDirectories(baseDir);
+            Files.createDirectories(dirPath);
         } catch (IOException e) {
-            throw new RuntimeException("cannot create shm dir: " + baseDir, e);
+            // /dev/shm が無い/権限が無い等の保険
+            dirPath = Paths.get("/tmp");
+            try {
+                Files.createDirectories(dirPath);
+            } catch (IOException e2) {
+                throw new RuntimeException("cannot create shm dir: " + dirPath, e2);
+            }
         }
+        this.baseDir = dirPath;
+
+        // ★ 未設定なら 131072（既存の DEFAULT_RING_SIZE をそのまま使う）
+        this.ringSize = parseIntEnv(RING_ENV, DEFAULT_RING_SIZE);
     }
 
     private static int parseIntEnv(String key, int def) {
