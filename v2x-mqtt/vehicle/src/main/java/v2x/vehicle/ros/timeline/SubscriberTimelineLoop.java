@@ -15,6 +15,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32C;
 
@@ -35,6 +39,28 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
 
     // RAW_ONLY時の保存ファイル名連番（regionごと）※計測キーではない
     private final Map<String, Integer> rawOnlySeqByRegion = new HashMap<>();
+
+    private static final int LAT_QUEUE_CAP = 8192;
+    private static final ThreadPoolExecutor LAT_EXEC;
+    static {
+        LAT_EXEC = new ThreadPoolExecutor(
+                1, 1,
+                0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(LAT_QUEUE_CAP),
+                new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "latency-worker");
+                        t.setDaemon(true);
+                        return t;
+                    }
+                },
+                // 重要: 満杯を検知したいので AbortPolicy（例外）にする
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+        // core thread を先に起こす（起動直後の遅延を減らす）
+        LAT_EXEC.prestartAllCoreThreads();
+    }
 
     public SubscriberTimelineLoop(
             ConnectedNode node,
@@ -148,24 +174,38 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
                         // 保存完了時刻
                         long saveNano = System.nanoTime();
 
-                        // hashでsendNanoを引く
-                        int hash = crc32c(rawPcd);
-                        Long sendNano = LAT_STORE.getSendNanoByHash(r, hash);
+                        Runnable task = () -> {
+                            try {
+                                int hash = crc32c(rawPcd);
+                                Long sendNano = LAT_STORE.getSendNanoByHash(r, hash);
 
-                        if (sendNano != null) {
-                            long latencyNs = saveNano - sendNano;
-                            double latencyMs = latencyNs / 1_000_000.0;
-                            // 既存フォーマット維持: recvNano欄に saveNano を入れる
+                                if (sendNano != null) {
+                                    long latencyNs = saveNano - sendNano;
+                                    double latencyMs = latencyNs / 1_000_000.0;
+                                    TimelineLog.logf(
+                                            "SUB",
+                                            "saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
+                                            out.getAbsolutePath(), len, latencyNs, latencyMs, sendNano, saveNano
+                                    );
+                                } else {
+                                    TimelineLog.logf(
+                                            "SUB",
+                                            "saved PCD: %s bytes=%d saveNano=%d",
+                                            out.getAbsolutePath(), len, saveNano
+                                    );
+                                }
+                            } catch (Exception e) {
+                                TimelineLog.error("SUB", "latency-worker failed", e);
+                            }
+                        };
+
+                        try {
+                            LAT_EXEC.execute(task);
+                        } catch (RejectedExecutionException rej) {
+                            // キュー満杯: latency計算は捨てる。保存ログだけ出す。
                             TimelineLog.logf(
                                     "SUB",
-                                    "saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
-                                    out.getAbsolutePath(), len, latencyNs, latencyMs, sendNano, saveNano
-                            );
-                        } else {
-                            // 上書き/衝突/送信側未記録など
-                            TimelineLog.logf(
-                                    "SUB",
-                                    "saved PCD: %s bytes=%d saveNano=%d",
+                                    "saved PCD: %s bytes=%d saveNano=%d (latency skipped: queue full)",
                                     out.getAbsolutePath(), len, saveNano
                             );
                         }
