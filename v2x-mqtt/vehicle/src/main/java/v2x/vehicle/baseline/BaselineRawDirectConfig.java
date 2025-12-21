@@ -4,11 +4,8 @@ import v2x.vehicle.config.AppConfig;
 
 import java.io.File;
 
-/**
- * Env parsing for baseline_raw_direct.
- */
 public final class BaselineRawDirectConfig {
-    public final String role; // send|recv|both
+    public final String role;
     public final boolean doSend;
     public final boolean doRecv;
 
@@ -22,7 +19,6 @@ public final class BaselineRawDirectConfig {
     public final long stepMs;
     public final boolean loop;
 
-    /** Optional timeline dir (JSON). Used only for end-of-run frame count hint. */
     public final File timelineDir;
 
     private BaselineRawDirectConfig(
@@ -51,37 +47,6 @@ public final class BaselineRawDirectConfig {
         this.timelineDir = timelineDir;
     }
 
-    public static BaselineRawDirectConfig fromEnv(AppConfig cfg) {
-        String role = env("BASELINE_ROLE", "both").trim().toLowerCase();
-        boolean doSend = role.equals("send") || role.equals("both");
-        boolean doRecv = role.equals("recv") || role.equals("both");
-
-        String dstHost = env("BASELINE_DST_HOST", "").trim();
-        int dstPort = envInt("BASELINE_DST_PORT", 60000);
-        int listenPort = envInt("BASELINE_LISTEN_PORT", 60000);
-
-        // datasetDir: BASELINE_DATASET_DIR > REGION_TIMELINE_DIR > DATASET_PATH > ./dataset
-        String datasetDir = env("BASELINE_DATASET_DIR", "");
-        if (datasetDir.isBlank()) datasetDir = env("REGION_TIMELINE_DIR", "");
-        if (datasetDir.isBlank()) datasetDir = env("DATASET_PATH", cfg.datasetPath);
-        if (datasetDir.isBlank()) datasetDir = "./dataset";
-
-        String recvDir = env("BASELINE_RECV_DIR", cfg.transferRecvDir);
-        long stepMs = envLong("BASELINE_STEP_MS", envLong("REGION_TIMELINE_STEP_MS", 100L));
-        boolean loop = "1".equals(env("BASELINE_LOOP", "0"));
-
-        String timelineDirStr = env("BASELINE_TIMELINE_DIR", env("REGION_TIMELINE_DIR", ""));
-        File timelineDir = timelineDirStr.isBlank() ? null : new File(timelineDirStr);
-
-        return new BaselineRawDirectConfig(
-                role, doSend, doRecv,
-                dstHost, dstPort, listenPort,
-                datasetDir, recvDir,
-                stepMs, loop,
-                timelineDir
-        );
-    }
-
     private static String env(String k, String def) {
         String v = System.getenv(k);
         return (v == null) ? def : v;
@@ -105,5 +70,49 @@ public final class BaselineRawDirectConfig {
         } catch (NumberFormatException e) {
             return def;
         }
+    }
+
+    private static boolean envBool01(String k, boolean def) {
+        String v = System.getenv(k);
+        if (v == null || v.isBlank()) return def;
+        return "1".equals(v.trim());
+    }
+
+    private static File envDir(String k) {
+        String v = System.getenv(k);
+        if (v == null || v.isBlank()) return null;
+        return new File(v.trim());
+    }
+
+    public static BaselineRawDirectConfig fromEnv(AppConfig cfg) {
+        String role = env("BASELINE_ROLE", "both").trim().toLowerCase();
+        boolean doSend = role.equals("send") || role.equals("both");
+        boolean doRecv = role.equals("recv") || role.equals("both");
+
+        String dstHost = env("BASELINE_DST_HOST", "").trim();
+        int dstPort = envInt("BASELINE_DST_PORT", 60000);
+        int listenPort = envInt("BASELINE_LISTEN_PORT", 60000);
+
+        // datasetDir: BASELINE_DATASET_DIR > REGION_TIMELINE_DIR > DATASET_PATH > ./dataset
+        String datasetDir = env("BASELINE_DATASET_DIR", "").trim();
+        if (datasetDir.isBlank()) datasetDir = env("REGION_TIMELINE_DIR", "").trim();
+        if (datasetDir.isBlank()) datasetDir = env("DATASET_PATH", cfg.datasetPath).trim();
+        if (datasetDir.isBlank()) datasetDir = "./dataset";
+
+        String recvDir = env("BASELINE_RECV_DIR", cfg.transferRecvDir).trim();
+
+        long stepMs = envLong("BASELINE_STEP_MS", envLong("REGION_TIMELINE_STEP_MS", 100L));
+        boolean loop = envBool01("BASELINE_LOOP", false);
+
+        // 終端判定の目安：jsonがあるなら frames 数として使う（内容は無視）
+        File timelineDir = envDir("BASELINE_TIMELINE_DIR");
+        if (timelineDir == null) {
+            timelineDir = envDir("REGION_TIMELINE_DIR");
+        }
+
+        return new BaselineRawDirectConfig(
+                role, doSend, doRecv, dstHost, dstPort, listenPort,
+                datasetDir, recvDir, stepMs, loop, timelineDir
+        );
     }
 }
