@@ -29,14 +29,12 @@ public final class TimelineConfig {
         public final long stepMs;
         public final boolean loop;
         public final long syncUnixSec;
-        public final PcdPayloadMode payloadMode;
 
-        private Pub(File timelineDir, long stepMs, boolean loop, long syncUnixSec, PcdPayloadMode payloadMode) {
+        private Pub(File timelineDir, long stepMs, boolean loop, long syncUnixSec) {
             this.timelineDir = timelineDir;
             this.stepMs = stepMs;
             this.loop = loop;
             this.syncUnixSec = syncUnixSec;
-            this.payloadMode = payloadMode;
         }
 
         public static Pub fromEnv() {
@@ -44,8 +42,7 @@ public final class TimelineConfig {
             long step = parseLongEnv("REGION_TIMELINE_STEP_MS", 100L);
             boolean loop = parseBool01Env("REGION_TIMELINE_LOOP", false);
             long sync = parseLongEnv("TIMELINE_SYNC_UNIX", 0L);
-            PcdPayloadMode mode = PcdPayloadMode.fromEnv();
-            return new Pub(dir, step, loop, sync, mode);
+            return new Pub(dir, step, loop, sync);
         }
     }
 
@@ -54,14 +51,12 @@ public final class TimelineConfig {
         public final long stepMs;
         public final boolean loop;
         public final long syncUnixSec;
-        public final PcdPayloadMode payloadMode;
 
-        private Sub(File timelineDir, long stepMs, boolean loop, long syncUnixSec, PcdPayloadMode payloadMode) {
+        private Sub(File timelineDir, long stepMs, boolean loop, long syncUnixSec) {
             this.timelineDir = timelineDir;
             this.stepMs = stepMs;
             this.loop = loop;
             this.syncUnixSec = syncUnixSec;
-            this.payloadMode = payloadMode;
         }
 
         public static Sub fromEnv() {
@@ -69,8 +64,7 @@ public final class TimelineConfig {
             long step = parseLongEnv("SUB_TIMELINE_STEP_MS", 100L);
             boolean loop = parseBool01Env("SUB_TIMELINE_LOOP", false);
             long sync = parseLongEnv("TIMELINE_SYNC_UNIX", 0L);
-            PcdPayloadMode mode = PcdPayloadMode.fromEnv();
-            return new Sub(dir, step, loop, sync, mode);
+            return new Sub(dir, step, loop, sync);
         }
     }
 }

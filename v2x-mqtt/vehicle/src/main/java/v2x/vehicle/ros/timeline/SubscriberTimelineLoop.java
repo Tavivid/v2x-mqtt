@@ -7,10 +7,14 @@ import org.ros.node.topic.Subscriber;
 import std_msgs.ByteMultiArray;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32C;
 
@@ -20,19 +24,16 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
     private final List<Path> frames;
     private final long stepMs;
     private final boolean loop;
+
     private final Map<String, Subscriber<ByteMultiArray>> active = new HashMap<>();
     private int frameIndex = 0;
+
     private final long syncUnixSec;
 
-    // ★共有メモリで sendNano を受け取る（hashキー）
+    // sendNano を共有メモリ(mmap)で受け取る（hashキー）
     private static final SharedLatencyStore LAT_STORE = new SharedLatencyStore();
 
-    // ★受信payloadのモード（RAW_ONLYならPCD本体だけ）
-    private static final String PCD_PAYLOAD_MODE
-            = System.getenv().getOrDefault("PCD_PAYLOAD_MODE", "NAMED_WITH_SENDNANO");
-    private final boolean rawOnly = "RAW_ONLY".equalsIgnoreCase(PCD_PAYLOAD_MODE);
-
-    // ★RAW_ONLY時の保存ファイル名連番（regionごと）※ファイル名は計測に使わない
+    // RAW_ONLY時の保存ファイル名連番（regionごと）※計測キーではない
     private final Map<String, Integer> rawOnlySeqByRegion = new HashMap<>();
 
     public SubscriberTimelineLoop(
@@ -49,14 +50,9 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
         this.syncUnixSec = syncUnixSec;
     }
 
-    private static int crc32c(byte[] data) {
-        CRC32C c = new CRC32C();
-        c.update(data, 0, data.length);
-        return (int) c.getValue();
-    }
-
     @Override
     protected void loop() throws InterruptedException {
+        // 同期開始時刻まで待つ（任意）
         if (syncUnixSec > 0L) {
             long nowSec = System.currentTimeMillis() / 1000L;
             if (nowSec < syncUnixSec) {
@@ -118,111 +114,61 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
 
             try {
                 Subscriber<ByteMultiArray> sub = node.newSubscriber(topic, ByteMultiArray._TYPE);
-                sub.addMessageListener(message -> {
-                    long recvNano = System.nanoTime();
 
+                sub.addMessageListener(message -> {
                     try {
                         ChannelBuffer buf = message.getData();
                         int len = (buf != null) ? buf.readableBytes() : -1;
-                        if (buf == null) {
-                            throw new IllegalStateException("ByteMultiArray.getData() returned null");
-                        }
-                        if (len <= 0) {
-                            throw new IllegalStateException("empty payload");
-                        }
+
+                        if (buf == null) throw new IllegalStateException("ByteMultiArray.getData() returned null");
+                        if (len <= 0) throw new IllegalStateException("empty payload");
 
                         ChannelBuffer dup = buf.duplicate();
-                        int headerIndex = dup.readerIndex();
+                        int start = dup.readerIndex();
 
-                        final String fileName;
-                        final byte[] rawPcd;
+                        // RAW_ONLY専用: payload全体がPCD本体
+                        byte[] rawPcd = new byte[len];
+                        dup.getBytes(start, rawPcd);
 
-                        if (rawOnly) {
-                            // RAW_ONLY: payload全体がPCD本体
-                            int seq;
-                            synchronized (rawOnlySeqByRegion) {
-                                seq = rawOnlySeqByRegion.getOrDefault(r, 0);
-                                rawOnlySeqByRegion.put(r, seq + 1);
-                            }
-                            fileName = String.format("%06d.pcd", seq);
-
-                            rawPcd = new byte[len];
-                            dup.getBytes(headerIndex, rawPcd);
-
-                            // 保存（従来どおり）
-                            File base = new File("/home/tavivid/v2x-pcd/received_raw");
-                            File outDir = new File(base, r);
-                            outDir.mkdirs();
-                            File out = new File(outDir, fileName);
-                            Files.write(out.toPath(), rawPcd);
-
-                            long saveNano = System.nanoTime();
-                            
-                            // ★hashで sendNano を引く
-                            int hash = crc32c(rawPcd);
-                            Long sendNano = LAT_STORE.getSendNanoByHash(r, hash);
-
-                            if (sendNano != null) {
-                                long latencyNs = saveNano - sendNano;
-                                double latencyMs = latencyNs / 1_000_000.0;
-
-                                // 既存フォーマットをなるべく維持（RAW_ONLYでは recvNano 欄に saveNano を入れる）
-                                TimelineLog.logf(
-                                        "SUB",
-                                        "saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
-                                        out.getAbsolutePath(), len, latencyNs, latencyMs, sendNano, saveNano
-                                );
-                            } else {
-                                // 見つからない（上書き/衝突/送信側未記録など）
-                                TimelineLog.logf(
-                                        "SUB",
-                                        "saved PCD: %s bytes=%d saveNano=%d",
-                                        out.getAbsolutePath(), len, saveNano
-                                );
-                            }
-                            return;
+                        // 保存ファイル名（regionごと連番）
+                        int seq;
+                        synchronized (rawOnlySeqByRegion) {
+                            seq = rawOnlySeqByRegion.getOrDefault(r, 0);
+                            rawOnlySeqByRegion.put(r, seq + 1);
                         }
+                        String fileName = String.format("%06d.pcd", seq);
 
-                        // 従来: [8:sendNano][4:nameLen][name][pcd]
-                        if (len < 12) {
-                            throw new IllegalStateException("payload too short for header: len=" + len);
-                        }
-
-                        long sendNano = dup.getLong(headerIndex);
-                        int nameLen = dup.getInt(headerIndex + 8);
-
-                        if (nameLen < 0 || 12 + nameLen > len) {
-                            throw new IllegalStateException("invalid nameLen=" + nameLen + " payloadLen=" + len);
-                        }
-
-                        int nameOffset = headerIndex + 12;
-                        byte[] nameBytes = new byte[nameLen];
-                        dup.getBytes(nameOffset, nameBytes);
-                        String namedFile = new String(nameBytes, StandardCharsets.UTF_8);
-
-                        int pcdOffset = nameOffset + nameLen;
-                        int pcdLen = len - (12 + nameLen);
-                        if (pcdLen <= 0) {
-                            throw new IllegalStateException("no PCD body in payload");
-                        }
-
-                        byte[] namedRaw = new byte[pcdLen];
-                        dup.getBytes(pcdOffset, namedRaw);
-
+                        // 保存（従来どおり）
                         File base = new File("/home/tavivid/v2x-pcd/received_raw");
                         File outDir = new File(base, r);
                         outDir.mkdirs();
-                        File out = new File(outDir, namedFile);
-                        Files.write(out.toPath(), namedRaw);
+                        File out = new File(outDir, fileName);
+                        Files.write(out.toPath(), rawPcd);
 
-                        long latencyNs = recvNano - sendNano;
-                        double latencyMs = latencyNs / 1_000_000.0;
+                        // 保存完了時刻
+                        long saveNano = System.nanoTime();
 
-                        TimelineLog.logf(
-                                "SUB",
-                                "saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
-                                out.getAbsolutePath(), len, latencyNs, latencyMs, sendNano, recvNano
-                        );
+                        // hashでsendNanoを引く
+                        int hash = crc32c(rawPcd);
+                        Long sendNano = LAT_STORE.getSendNanoByHash(r, hash);
+
+                        if (sendNano != null) {
+                            long latencyNs = saveNano - sendNano;
+                            double latencyMs = latencyNs / 1_000_000.0;
+                            // 既存フォーマット維持: recvNano欄に saveNano を入れる
+                            TimelineLog.logf(
+                                    "SUB",
+                                    "saved PCD: %s bytes=%d latency_ns=%d latency_ms=%.3f sendNano=%d recvNano=%d",
+                                    out.getAbsolutePath(), len, latencyNs, latencyMs, sendNano, saveNano
+                            );
+                        } else {
+                            // 上書き/衝突/送信側未記録など
+                            TimelineLog.logf(
+                                    "SUB",
+                                    "saved PCD: %s bytes=%d saveNano=%d",
+                                    out.getAbsolutePath(), len, saveNano
+                            );
+                        }
 
                     } catch (Exception e) {
                         TimelineLog.error("SUB", "failed to handle incoming message", e);
@@ -230,6 +176,7 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
                 });
 
                 active.put(r, sub);
+
             } catch (Exception e) {
                 TimelineLog.error("SUB", "exception while handling incoming message for region=" + r, e);
                 TimelineLog.error("SUB", "failed to handle incoming message", e);
@@ -238,5 +185,11 @@ public final class SubscriberTimelineLoop extends CancellableLoop {
 
         Thread.sleep(stepMs);
         frameIndex++;
+    }
+
+    private static int crc32c(byte[] data) {
+        CRC32C c = new CRC32C();
+        c.update(data, 0, data.length);
+        return (int) c.getValue();
     }
 }
